@@ -1,0 +1,39 @@
+# 临时分析脚本（开发过程产物）
+advice.js
+analyze.js
+best*.js
+check*.js
+compare.js
+death.js
+debug*.js
+deep*.js
+economy*.js
+final*.js
+full_economy.js
+gold_check.js
+hp_check.js
+loadfix.js
+lv17.js
+mp_calc.js
+mycheck.js
+potion_find.js
+real_economy*.js
+realmap*.js
+reconcile.js
+sim.js
+swd.js
+test*.js
+verify*.js
+verify*.bak
+wuma.js
+
+# 构建产物（farm-calculator.html 是最终交付，保留）
+# 如不想提交269KB的生成文件，取消下面注释：
+# farm-calculator.html
+
+# 系统/编辑器
+*.log
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

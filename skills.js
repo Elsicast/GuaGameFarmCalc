@@ -1,0 +1,73 @@
+// 技能数据 - 基于 GEEM2.db Magic表 + CustomMagic配置
+// Job: warrior=战士, mage=法师, taoist=道士
+// type: attack=攻击, passive=被动, buff=增益, summon=召唤, utility=辅助, heal=治疗
+// damageBonus: 伤害加成百分比(基于服务端Power/DefPower换算)
+// power: 服务端原始威力值, defPower: 服务端附加威力
+// delay: 冷却回合数(0=每次攻击触发, >0=每N回合触发一次) 源自Magic表Delay字段
+const SKILLS = {
+  // ===== 战士技能 (Job=0) Delay=0 近战无冷却 =====
+  '基本剑术': { job: 'warrior', type: 'passive', levelReq: 7, power: 0, defPower: 0, damageBonus: 0.05, delay: 0, desc: '被动提升命中与基础攻击' },
+  '攻杀剑术': { job: 'warrior', type: 'attack', levelReq: 15, power: 0, defPower: 0, damageBonus: 0.12, delay: 0, desc: '强力一击，附加攻击力' },
+  '刺杀剑术': { job: 'warrior', type: 'attack', levelReq: 22, power: 0, defPower: 0, damageBonus: 0.25, delay: 0, desc: '无视防御的穿刺攻击' },
+  '半月弯刀': { job: 'warrior', type: 'attack', levelReq: 26, power: 0, defPower: 3, damageBonus: 0.35, delay: 0, aoe: true, desc: '弧形剑气，范围攻击' },
+  '野蛮冲撞': { job: 'warrior', type: 'utility', levelReq: 30, power: 0, defPower: 0, damageBonus: 0.20, delay: 0, desc: '攻击时25%概率眩晕目标1回合' },
+  '烈火剑法': { job: 'warrior', type: 'attack', levelReq: 35, power: 0, defPower: 7, damageBonus: 0.70, delay: 0, desc: '聚集烈焰于剑身，爆发高额伤害' },
+  '雷霆剑法': { job: 'warrior', type: 'attack', levelReq: 32, power: 0, defPower: 10, damageBonus: 0.85, delay: 0, desc: '引雷霆之力于剑，强力雷击' },
+  '狮子吼': { job: 'warrior', type: 'utility', levelReq: 36, power: 0, defPower: 10, damageBonus: 0.50, delay: 5, desc: '怒吼震慑周围敌人' },
+  '双龙斩': { job: 'warrior', type: 'attack', levelReq: 38, power: 0, defPower: 6, damageBonus: 0.65, delay: 0, desc: '双刀交叉斩击，高额物理伤害' },
+  '龙影剑法': { job: 'warrior', type: 'attack', levelReq: 38, power: 0, defPower: 10, damageBonus: 0.80, delay: 0, desc: '剑影如龙，连续斩击' },
+  '擒龙手': { job: 'warrior', type: 'attack', levelReq: 32, power: 0, defPower: 11, damageBonus: 0.90, delay: 0, desc: '擒拿敌人，附加内力伤害' },
+  '逐日剑法': { job: 'warrior', type: 'attack', levelReq: 50, power: 0, defPower: 10, damageBonus: 1.00, delay: 0, desc: '剑气如虹，远程斩杀' },
+  '护身气幕': { job: 'warrior', type: 'buff', levelReq: 39, power: 0, defPower: 17, damageBonus: 0.40, delay: 0, desc: '气幕护体，减少受到的伤害' },
+  '剑气爆': { job: 'warrior', type: 'attack', levelReq: 44, power: 0, defPower: 15, damageBonus: 0.95, delay: 0, aoe: true, desc: '剑气爆发，大范围高伤害' },
+  '天务': { job: 'warrior', type: 'attack', levelReq: 47, power: 0, defPower: 8, damageBonus: 0.55, delay: 0, desc: '天降剑气，持续伤害' },
+
+  // ===== 法师技能 (Job=1) 全部无冷却（AOE常驻溅射/辅助常驻被动） =====
+  '火球术': { job: 'mage', type: 'attack', levelReq: 7, power: 8, defPower: 2, damageBonus: 0.10, delay: 0, desc: '基础火系魔法攻击' },
+  '大火球': { job: 'mage', type: 'attack', levelReq: 15, power: 6, defPower: 10, damageBonus: 0.25, delay: 0, desc: '强化火球，更高伤害' },
+  '抗拒火环': { job: 'mage', type: 'utility', levelReq: 12, power: 1, defPower: 0, damageBonus: 0.05, delay: 0, desc: '火环推开周围敌人' },
+  '地狱火': { job: 'mage', type: 'attack', levelReq: 16, power: 14, defPower: 6, damageBonus: 0.35, delay: 0, desc: '直线火焰喷射' },
+  '疾光电影': { job: 'mage', type: 'attack', levelReq: 26, power: 12, defPower: 12, damageBonus: 0.50, delay: 0, desc: '极速光束穿透敌人' },
+  '雷电术': { job: 'mage', type: 'attack', levelReq: 17, power: 8, defPower: 9, damageBonus: 0.45, delay: 0, desc: '召唤雷电打击目标' },
+  '诱惑之光': { job: 'mage', type: 'utility', levelReq: 13, power: 3, defPower: 0, damageBonus: 0.05, delay: 0, desc: '魅惑当前怪物为友军协助作战（精英/BOSS无效）' },
+  '瞬息移动': { job: 'mage', type: 'utility', levelReq: 19, power: 0, defPower: 0, damageBonus: 0.02, delay: 0, desc: '瞬间传送到目标位置' },
+  '火墙': { job: 'mage', type: 'attack', levelReq: 24, power: 3, defPower: 3, damageBonus: 0.40, delay: 0, aoe: true, desc: '在地面释放火墙持续灼烧' },
+  '爆裂火焰': { job: 'mage', type: 'attack', levelReq: 22, power: 8, defPower: 6, damageBonus: 0.40, delay: 0, aoe: true, desc: '火焰爆裂，范围伤害' },
+  '地狱雷光': { job: 'mage', type: 'attack', levelReq: 30, power: 10, defPower: 30, damageBonus: 0.70, delay: 0, aoe: true, desc: '大范围雷光轰炸' },
+  '魔法盾': { job: 'mage', type: 'buff', levelReq: 31, power: 0, defPower: 30, damageBonus: 0.30, delay: 0, desc: '魔法护盾吸收伤害，永久减伤30%' },
+  '圣言术': { job: 'mage', type: 'attack', levelReq: 32, power: 0, defPower: 40, damageBonus: 0.30, delay: 0, desc: '对不死系造成致命打击' },
+  '冰咆哮': { job: 'mage', type: 'attack', levelReq: 35, power: 12, defPower: 14, damageBonus: 0.80, delay: 0, aoe: true, desc: '冰风暴席卷范围敌人' },
+  '寒冰掌': { job: 'mage', type: 'attack', levelReq: 28, power: 15, defPower: 0, damageBonus: 0.55, delay: 0, desc: '寒冰之力冻结目标' },
+  '灭天火': { job: 'mage', type: 'attack', levelReq: 38, power: 15, defPower: 9, damageBonus: 0.90, delay: 0, desc: '毁灭性火焰，极高伤害' },
+  '流星火雨': { job: 'mage', type: 'attack', levelReq: 49, power: 12, defPower: 14, damageBonus: 1.00, delay: 0, desc: '天降流星火雨，毁天灭地' },
+  '分身术': { job: 'mage', type: 'buff', levelReq: 41, power: 0, defPower: 15, damageBonus: 0.40, delay: 0, desc: '分身协助战斗，永久减伤40%' },
+  '嗜血术': { job: 'mage', type: 'attack', levelReq: 33, power: 8, defPower: 9, damageBonus: 0.65, delay: 0, desc: '吸取目标生命为己用' },
+  '火龙气焰': { job: 'mage', type: 'attack', levelReq: 42, power: 10, defPower: 30, damageBonus: 0.95, delay: 0, aoe: true, desc: '火龙吐息，大范围焚烧' },
+  '天霜冰环': { job: 'mage', type: 'attack', levelReq: 44, power: 12, defPower: 14, damageBonus: 0.85, delay: 0, aoe: true, desc: '冰环爆发，冻结并伤害' },
+  '深延术': { job: 'mage', type: 'utility', levelReq: 47, power: 0, defPower: 48, damageBonus: 0.50, delay: 0, desc: '延伸魔法效果持续时间' },
+  '冰焰术': { job: 'mage', type: 'attack', levelReq: 53, power: 12, defPower: 14, damageBonus: 1.10, delay: 0, desc: '冰火交融，终极魔法' },
+
+  // ===== 道士技能 (Job=2) 道术有冷却 =====
+  '治愈术': { job: 'taoist', type: 'heal', levelReq: 7, power: 14, defPower: 0, damageBonus: 0.05, delay: 2, desc: '恢复自身生命值' },
+  '精神力战法': { job: 'taoist', type: 'passive', levelReq: 9, power: 0, defPower: 0, damageBonus: 0.10, delay: 0, desc: '被动提升道术攻击力' },
+  '施毒术': { job: 'taoist', type: 'attack', levelReq: 14, power: 0, defPower: 0, damageBonus: 0.20, delay: 2, desc: '对目标施加持续毒伤' },
+  '灵魂火符': { job: 'taoist', type: 'attack', levelReq: 18, power: 8, defPower: 3, damageBonus: 0.35, delay: 0, desc: '火符飞出攻击目标' },
+  '幽灵盾': { job: 'taoist', type: 'buff', levelReq: 22, power: 0, defPower: 0, damageBonus: 0.10, delay: 0, desc: '提升魔法防御力' },
+  '神圣战甲术': { job: 'taoist', type: 'buff', levelReq: 25, power: 0, defPower: 0, damageBonus: 0.15, delay: 0, desc: '提升物理防御力' },
+  '困魔咒': { job: 'taoist', type: 'utility', levelReq: 28, power: 0, defPower: 0, damageBonus: 0.10, delay: 3, desc: '困住怪物使其无法移动' },
+  '召唤骷髅': { job: 'taoist', type: 'summon', levelReq: 19, power: 0, defPower: 0, damageBonus: 0.30, delay: 3, desc: '召唤骷髅协助战斗，群攻场上所有怪物' },
+  '隐身术': { job: 'taoist', type: 'buff', levelReq: 20, power: 0, defPower: 0, damageBonus: 0, delay: 6, desc: '隐匿身形6回合，怪物强制攻击召唤物' },
+  '集体隐身术': { job: 'taoist', type: 'buff', levelReq: 21, power: 0, defPower: 0, damageBonus: 0, delay: 6, desc: '群体隐匿6回合，怪物强制攻击召唤物' },
+  '心灵启示': { job: 'taoist', type: 'utility', levelReq: 23, power: 0, defPower: 0, damageBonus: 0.05, delay: 2, desc: '查看目标详细信息' },
+  '群体治愈术': { job: 'taoist', type: 'heal', levelReq: 31, power: 10, defPower: 4, damageBonus: 0.10, delay: 2, desc: '范围恢复生命' },
+  '召唤神兽': { job: 'taoist', type: 'summon', levelReq: 35, power: 0, defPower: 0, damageBonus: 0.60, delay: 6, desc: '召唤强力神兽协助战斗，群攻场上所有怪物' },
+  '气功波': { job: 'taoist', type: 'attack', levelReq: 27, power: 1, defPower: 0, damageBonus: 0.15, delay: 0, desc: '内力外放推开敌人' },
+  '净化术': { job: 'taoist', type: 'utility', levelReq: 30, power: 45, defPower: 0, damageBonus: 0.20, delay: 2, desc: '净化自身中毒状态' },
+  '无极真气': { job: 'taoist', type: 'buff', levelReq: 33, power: 1, defPower: 0, damageBonus: 0.25, delay: 0, desc: '大幅提升道术威力' },
+  '召唤月灵': { job: 'taoist', type: 'summon', levelReq: 38, power: 0, defPower: 0, damageBonus: 0.70, delay: 2, desc: '召唤月灵，强力远程攻击，群攻场上所有怪物' },
+  '诅咒术': { job: 'taoist', type: 'attack', levelReq: 40, power: 0, defPower: 14, damageBonus: 0.35, delay: 0, desc: '诅咒目标降低属性' },
+  '瘟疫': { job: 'taoist', type: 'attack', levelReq: 42, power: 0, defPower: 70, damageBonus: 0.55, delay: 0, aoe: true, desc: '释放瘟疫持续侵蚀，每回合伤害全场' },
+  '毒云': { job: 'taoist', type: 'attack', levelReq: 43, power: 0, defPower: 25, damageBonus: 0.40, delay: 0, aoe: true, desc: '毒雾弥漫持续伤害，每回合伤害全场' },
+  '血龙水': { job: 'taoist', type: 'utility', levelReq: 45, power: 0, defPower: 0, damageBonus: 0.30, delay: 3, desc: '特殊药水强化攻击' },
+  '阴阳盾': { job: 'taoist', type: 'buff', levelReq: 30, power: 0, defPower: 126, damageBonus: 0.45, delay: 0, desc: '阴阳护盾，大幅减伤' },
+};
