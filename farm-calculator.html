@@ -3918,22 +3918,23 @@ function getDropTable(monName, monLevel) {
   return t;
 }
 
-// 计算某怪的金币期望 + 药水期望（瓶数）
+// 计算某怪的金币期望 + 药水期望（瓶数 + 回血/回蓝量，按该怪自己的掉落档）
 function rollDropExpect(monName, monLevel) {
   const table = getDropTable(monName, monLevel);
-  let gold = 0, hpPot = 0, mpPot = 0;
+  let gold = 0, hpPot = 0, mpPot = 0; // 瓶数
+  let hpHeal = 0, mpHeal = 0;         // 回血/回蓝总量（瓶数×单瓶恢复量）
   const items = [];
   for (const d of table) {
     const p = 1 / d.chance;
     if (d.item === "金币") { gold += p * (d.count || 100); continue; }
     const it = ITEMS[d.item];
     if (it && it.type === "potion") {
-      if (it.healHp) hpPot += p;
-      else if (it.healMp) mpPot += p;
+      if (it.healHp) { hpPot += p; hpHeal += p * it.healHp; }
+      else if (it.healMp) { mpPot += p; mpHeal += p * it.healMp; }
     }
     items.push({ name: d.item, chance: d.chance, info: it });
   }
-  return { gold, hpPot, mpPot, items };
+  return { gold, hpPot, mpPot, hpHeal, mpHeal, items };
 }
 
 // ---------- 主计算：单张地图收益（对每只怪单独算，最后加权）----------
@@ -3947,6 +3948,7 @@ function calcMap(map, player, stats, _dps, mpPerTurn, parts) {
   // 关键：伤害用 dmgToMonster(parts, mon) 扣该怪自己的物防/魔防
   let wExpPerKill = 0, wGoldPerKill = 0, wTurnsPerKill = 0;
   let wDmgToPlayer = 0, wHpPotPerKill = 0, wMpPotPerKill = 0;
+  let wHpHealPerKill = 0, wMpHealPerKill = 0; // 逐怪按各自掉落档的回血/回蓝量
   let wSurvive = 0;
 
   for (const entry of map.monsters) {
@@ -3982,6 +3984,8 @@ function calcMap(map, player, stats, _dps, mpPerTurn, parts) {
     wDmgToPlayer += dmgToPlayer * w;
     wHpPotPerKill += r.hpPot * w;
     wMpPotPerKill += r.mpPot * w;
+    wHpHealPerKill += r.hpHeal * w; // 该怪按自己掉落档的回血量
+    wMpHealPerKill += r.mpHeal * w;
     wSurvive += survive * w;
   }
 
@@ -3995,20 +3999,16 @@ function calcMap(map, player, stats, _dps, mpPerTurn, parts) {
   const expPerMin = Math.round(wExpPerKill * killsPerMin);
   const goldPerMin = Math.round(wGoldPerKill * killsPerMin);
 
-  // 蓝药
+  // 蓝药：用 wMpHealPerKill（每只怪按各自掉落档的回蓝量，精确计算）
   const mpCostPerMin = mpPerTurn * turnsPerMin;
-  const mpPotPerMin = wMpPotPerKill * killsPerMin;
-  const isHighTier = map.monsters.some(e => { const m = MONSTERS[e.name]; return m && m.level > 40; });
-  const isMidTier = map.monsters.some(e => { const m = MONSTERS[e.name]; return m && m.level > 20; });
-  const mpPerPot = isHighTier ? 200 : 60;
-  const freeMpPerMin = mpPotPerMin * mpPerPot;
+  const mpPotPerMin = wMpPotPerKill * killsPerMin; // 瓶数（展示用）
+  const freeMpPerMin = wMpHealPerKill * killsPerMin; // 白嫖回蓝总量
   const mpCost = Math.max(0, mpCostPerMin - freeMpPerMin) * (50 / 30);
 
-  // 红药：每回合挨 wDmgToPlayer HP
+  // 红药：用 wHpHealPerKill（每只怪按各自掉落档的回血量，精确计算）
   const hpTakenPerMin = wDmgToPlayer * turnsPerMin;
-  const hpPotPerMin = wHpPotPerKill * killsPerMin;
-  const hpPerPot = isHighTier ? 200 : (isMidTier ? 60 : 30);
-  const freeHpPerMin = hpPotPerMin * hpPerPot;
+  const hpPotPerMin = wHpPotPerKill * killsPerMin; // 瓶数（展示用）
+  const freeHpPerMin = wHpHealPerKill * killsPerMin; // 白嫖回血总量
   const hpCost = Math.max(0, hpTakenPerMin - freeHpPerMin) * (50 / 30);
 
   const netGold = Math.round(goldPerMin - mpCost - hpCost);
