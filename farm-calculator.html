@@ -139,7 +139,9 @@ tr.impractical td.map-name b { color: #ff9800; }
   border-bottom: 2px solid #30475e; position: sticky; top: 0; white-space: nowrap; cursor: pointer;
 }
 .db-table th:hover { background: #1a237e; }
-.db-table td { padding: 6px; border-bottom: 1px solid #1e2d3d; }
+.db-table td { padding: 6px; border-bottom: 1px solid #1e2d3d; white-space: nowrap; }
+.db-table td.num { text-align: right; font-family: Consolas, monospace; }
+.db-table td:empty::before { content: "—"; color: #555; }
 .db-table tr { cursor: pointer; }
 .db-table tr:hover { background: #1a237e33; }
 .type-tag {
@@ -4564,7 +4566,14 @@ function renderItems() {
     }
     return true;
   });
-  list.sort((a, b) => (a[1].level || 0) - (b[1].level || 0));
+  // 排序：无等级的物品(药水/材料/力量戒指等)排最后，有等级的按等级升序
+  list.sort((a, b) => {
+    const la = a[1].level, lb = b[1].level;
+    if (!la && !lb) return a[0].localeCompare(b[0]);
+    if (!la) return 1;
+    if (!lb) return -1;
+    return la - lb;
+  });
   document.getElementById("item-count").textContent = `${list.length} 件`;
 
   const body = document.getElementById("items-body");

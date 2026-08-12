@@ -650,7 +650,14 @@ function renderItems() {
     }
     return true;
   });
-  list.sort((a, b) => (a[1].level || 0) - (b[1].level || 0));
+  // 排序：无等级的物品(药水/材料/力量戒指等)排最后，有等级的按等级升序
+  list.sort((a, b) => {
+    const la = a[1].level, lb = b[1].level;
+    if (!la && !lb) return a[0].localeCompare(b[0]);
+    if (!la) return 1;
+    if (!lb) return -1;
+    return la - lb;
+  });
   document.getElementById("item-count").textContent = `${list.length} 件`;
 
   const body = document.getElementById("items-body");
