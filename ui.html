@@ -1,5 +1,13 @@
-<h1>🐉 挂机传奇 · Farm 效率计算器</h1>
+<h1>🐉 挂机传奇 · Farm 计算器</h1>
 <p class="subtitle">粘贴角色 JSON，自动计算每张地图的经验/金币/药水成本/安全度/掉落 · 数据来自 guagame.com 源码</p>
+
+<div class="main-tabs">
+  <button class="main-tab active" onclick="switchTab('calc', this)">⚡ Farm 计算器</button>
+  <button class="main-tab" onclick="switchTab('db', this)">📖 游戏数据库</button>
+</div>
+
+<!-- ============ View 1: Farm 计算器 ============ -->
+<div id="view-calc" class="view active">
 
 <div class="panel">
   <h2>① 导入角色数据</h2>
@@ -28,8 +36,119 @@
   <p class="hint">
     💡 <b>净金币</b> = 怪物金币掉落 − 蓝药购买成本 − 红药购买成本（按实际承伤计算）。<br>
     💡 带 <span style="color:#ff9800">*</span> 的数字表示该图<b>扛不到杀死怪就死</b>，经验/掉落实际拿不到，净金币为纯药水亏损。<br>
-    💡 <b>安全度</b> = 100 − 危险怪物占比。危险怪 = 超过玩家等级+5 或玩家扛不住5击的怪。<br>
     💡 <b>击杀/分</b> 按游戏官方公式：60 ÷ (加权HP ÷ 每回合输出)，上限60（每秒1回合）。<br>
     💡 二大陆地图标注 <span class="c2">[二大陆]</span>，需先通关通天塔30层。
   </p>
 </div>
+
+</div><!-- /view-calc -->
+
+<!-- ============ View 2: 游戏数据库 ============ -->
+<div id="view-db" class="view">
+  <div class="db-layout">
+    <div class="db-sidenav">
+      <button class="db-nav-item active" onclick="switchDbSection('items', this)">⚔️ 装备物品</button>
+      <button class="db-nav-item" onclick="switchDbSection('monsters', this)">👹 怪物图鉴</button>
+      <button class="db-nav-item" onclick="switchDbSection('skills', this)">✨ 技能库</button>
+    </div>
+    <div class="db-content">
+      <!-- 装备物品 -->
+      <div id="db-section-items" class="db-section active">
+        <div class="filter-bar">
+          <label>职业</label>
+          <select id="item-filter-job" onchange="renderItems()">
+            <option value="">全部</option>
+            <option value="all">通用</option>
+            <option value="warrior">战士</option>
+            <option value="mage">法师</option>
+            <option value="taoist">道士</option>
+          </select>
+          <label>类型</label>
+          <select id="item-filter-type" onchange="renderItems()"></select>
+          <label>等级</label>
+          <input type="number" id="item-filter-lvmin" placeholder="min" style="width:50px" onchange="renderItems()" min="0">
+          ~<input type="number" id="item-filter-lvmax" placeholder="max" style="width:50px" onchange="renderItems()" min="0">
+          <label>特效</label>
+          <select id="item-filter-special" onchange="renderItems()">
+            <option value="">全部</option>
+            <option value="yes">有特效</option>
+          </select>
+          <input type="text" id="item-filter-kw" placeholder="🔍 搜索物品名/属性..." oninput="renderItems()">
+          <span class="filter-count" id="item-count"></span>
+        </div>
+        <div style="overflow-x:auto; max-height: 70vh;">
+          <table class="db-table" id="items-table">
+            <thead><tr>
+              <th>物品名</th><th>类型</th><th>职业</th><th>等级</th>
+              <th>攻击</th><th>魔法</th><th>道术</th><th>防御</th><th>魔防</th><th>特效</th>
+            </tr></thead>
+            <tbody id="items-body"></tbody>
+          </table>
+        </div>
+      </div>
+      <!-- 怪物图鉴 -->
+      <div id="db-section-monsters" class="db-section" style="display:none;">
+        <div class="filter-bar">
+          <label>类型</label>
+          <select id="mon-filter-type" onchange="renderMonsters()">
+            <option value="">全部</option>
+            <option value="normal">普通</option>
+            <option value="elite">精英</option>
+            <option value="boss">Boss</option>
+          </select>
+          <label>大陆</label>
+          <select id="mon-filter-cont" onchange="renderMonsters()">
+            <option value="">全部</option>
+            <option value="1">一大陆</option>
+            <option value="2">二大陆</option>
+          </select>
+          <label>等级</label>
+          <input type="number" id="mon-filter-lvmin" placeholder="min" style="width:50px" onchange="renderMonsters()" min="0">
+          ~<input type="number" id="mon-filter-lvmax" placeholder="max" style="width:50px" onchange="renderMonsters()" min="0">
+          <input type="text" id="mon-filter-kw" placeholder="🔍 搜索怪物名..." oninput="renderMonsters()">
+          <span class="filter-count" id="mon-count"></span>
+        </div>
+        <div style="overflow-x:auto; max-height: 70vh;">
+          <table class="db-table" id="monsters-table">
+            <thead><tr>
+              <th>怪物名</th><th>等级</th><th>类型</th><th>HP</th><th>攻击</th><th>物防</th><th>魔防</th><th>经验</th><th>技能</th><th>所在地图</th>
+            </tr></thead>
+            <tbody id="monsters-body"></tbody>
+          </table>
+        </div>
+      </div>
+      <!-- 技能库 -->
+      <div id="db-section-skills" class="db-section" style="display:none;">
+        <div class="filter-bar">
+          <label>职业</label>
+          <select id="skill-filter-job" onchange="renderSkills()">
+            <option value="">全部</option>
+            <option value="warrior">战士</option>
+            <option value="mage">法师</option>
+            <option value="taoist">道士</option>
+          </select>
+          <label>类型</label>
+          <select id="skill-filter-type" onchange="renderSkills()">
+            <option value="">全部</option>
+            <option value="attack">攻击</option>
+            <option value="passive">被动</option>
+            <option value="buff">增益</option>
+            <option value="summon">召唤</option>
+            <option value="utility">辅助</option>
+            <option value="heal">治疗</option>
+          </select>
+          <input type="text" id="skill-filter-kw" placeholder="🔍 搜索技能名..." oninput="renderSkills()">
+          <span class="filter-count" id="skill-count"></span>
+        </div>
+        <div style="overflow-x:auto; max-height: 70vh;">
+          <table class="db-table" id="skills-table">
+            <thead><tr>
+              <th>技能名</th><th>职业</th><th>类型</th><th>等级</th><th>加成</th><th>冷却</th><th>AOE</th><th>描述</th>
+            </tr></thead>
+            <tbody id="skills-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div><!-- /view-db -->

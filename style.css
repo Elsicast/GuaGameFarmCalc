@@ -85,3 +85,95 @@ tr.impractical td.map-name b { color: #ff9800; }
 .drop-item .src { color: #666; font-size: 10px; }
 
 .hint { color: #888; font-size: 12px; margin-top: 8px; line-height: 1.6; }
+
+/* === Tab 切换 === */
+.main-tabs {
+  display: flex; gap: 0; border-bottom: 2px solid #30475e; margin-bottom: 14px;
+}
+.main-tab {
+  background: transparent; color: #888; border: none; border-bottom: 3px solid transparent;
+  padding: 12px 24px; cursor: pointer; font-size: 15px; transition: all 0.15s;
+}
+.main-tab:hover { color: #4fc3f7; }
+.main-tab.active { color: #ffd700; border-bottom-color: #ffd700; font-weight: bold; }
+.view { display: none; }
+.view.active { display: block; }
+
+/* === 数据库 子导航 === */
+.db-layout { display: flex; gap: 14px; }
+.db-sidenav {
+  width: 130px; flex-shrink: 0; display: flex; flex-direction: column; gap: 4px;
+}
+.db-nav-item {
+  background: #0f1726; color: #b0bec5; border: 1px solid #1e2d3d; border-radius: 4px;
+  padding: 10px 12px; cursor: pointer; text-align: left; font-size: 13px; transition: all 0.15s;
+}
+.db-nav-item:hover { background: #1a237e; color: #fff; }
+.db-nav-item.active { background: #1976d2; color: #fff; border-color: #1976d2; }
+.db-content { flex: 1; min-width: 0; }
+
+/* === 筛选区 === */
+.filter-bar {
+  display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px;
+  padding: 10px; background: #0f1726; border-radius: 6px; border: 1px solid #1e2d3d;
+}
+.filter-bar label { color: #888; font-size: 12px; }
+.filter-bar select, .filter-bar input[type="number"], .filter-bar input[type="text"] {
+  background: #16213e; color: #e0e0e0; border: 1px solid #30475e; border-radius: 3px;
+  padding: 5px 8px; font-size: 12px;
+}
+.filter-bar input[type="text"] { min-width: 140px; }
+.filter-count { color: #4fc3f7; font-size: 12px; margin-left: auto; }
+
+/* === 数据库表格 === */
+.db-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.db-table th {
+  background: #0f1726; color: #4fc3f7; padding: 8px 6px; text-align: left;
+  border-bottom: 2px solid #30475e; position: sticky; top: 0; white-space: nowrap; cursor: pointer;
+}
+.db-table th:hover { background: #1a237e; }
+.db-table td { padding: 6px; border-bottom: 1px solid #1e2d3d; }
+.db-table tr { cursor: pointer; }
+.db-table tr:hover { background: #1a237e33; }
+.type-tag {
+  display: inline-block; padding: 1px 6px; border-radius: 8px; font-size: 10px;
+}
+.type-tag.weapon { background: #4a148c; color: #e1bee7; }
+.type-tag.armor { background: #1b5e20; color: #a5d6a7; }
+.type-tag.helmet { background: #1b5e20; color: #a5d6a7; }
+.type-tag.ring { background: #bf360c; color: #ffccbc; }
+.type-tag.bracelet { background: #bf360c; color: #ffccbc; }
+.type-tag.necklace { background: #bf360c; color: #ffccbc; }
+.type-tag.skillbook { background: #0d47a1; color: #90caf9; }
+.type-tag.potion { background: #33691e; color: #dcedc8; }
+.type-tag.jade { background: #827717; color: #f0f4c3; }
+.type-tag.material { background: #37474f; color: #cfd8dc; }
+.type-tag.boots, .type-tag.belt { background: #3e2723; color: #d7ccc8; }
+.job-tag { font-size: 10px; padding: 1px 4px; border-radius: 3px; }
+.job-tag.mage { background: #4a148c; color: #e1bee7; }
+.job-tag.warrior { background: #b71c1c; color: #ffcdd2; }
+.job-tag.taoist { background: #1b5e20; color: #a5d6a7; }
+.job-tag.all { background: #37474f; color: #cfd8dc; }
+.special-tag { background: #e65100; color: #fff; font-size: 10px; padding: 1px 5px; border-radius: 3px; }
+.mtype-normal { color: #b0bec5; }
+.mtype-elite { color: #ffd54f; }
+.mtype-boss { color: #ef5350; font-weight: bold; }
+.drop-source {
+  background: #0f1726; padding: 5px 8px; border-radius: 3px; margin-bottom: 4px;
+  border-left: 2px solid #4fc3f7; font-size: 11px;
+}
+.drop-source .mon { color: #fff; }
+.drop-source .prob { color: #ffd700; }
+.drop-source .maps { color: #90caf9; font-size: 10px; }
+.drop-source.generic { border-left-color: #888; }
+
+/* 详情面板（数据库行展开） */
+.db-detail-row { background: #0f1726 !important; }
+.db-detail-row td { padding: 12px; }
+.db-detail-content { display: grid; gap: 8px; }
+.db-detail-section { margin-bottom: 8px; }
+.db-detail-section h4 { color: #4fc3f7; font-size: 12px; margin-bottom: 6px; }
+.stat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 6px; margin-bottom: 8px; }
+.stat-grid .stat-item { background: #16213e; padding: 4px 8px; border-radius: 3px; font-size: 11px; }
+.stat-grid .stat-item .lbl { color: #888; }
+.stat-grid .stat-item .val { color: #fff; }

@@ -532,3 +532,307 @@ function toggleDetail(idx) {
   expandedRow = expandedRow === idx ? null : idx;
   renderTable();
 }
+
+/* ===================================================================
+ * 数据库 Tab
+ * =================================================================== */
+
+// 反向索引（页面加载时构建一次）
+let _reverseIndex = null; // { itemToSources, monsterToMaps }
+
+function buildReverseIndex() {
+  if (_reverseIndex) return _reverseIndex;
+  // 1. monsterToMaps: 怪物名 → [{地图名, levelReq, continent, count}]
+  const monsterToMaps = {};
+  for (const map of MAPS) {
+    const continent = map.continent || 1;
+    for (const mc of map.monsters) {
+      if (!monsterToMaps[mc.name]) monsterToMaps[mc.name] = [];
+      monsterToMaps[mc.name].push({ name: map.name, levelReq: map.levelReq, continent, count: mc.count });
+    }
+  }
+  // 2. itemToSources: 物品名 → [{怪物名, 怪物等级, 怪物类型, chance, count?, maps[]}]
+  const itemToSources = {};
+  function addItemSource(itemName, monName, chance, count) {
+    if (!ITEMS[itemName]) return; // 悬挂引用忽略
+    if (!itemToSources[itemName]) itemToSources[itemName] = [];
+    const mon = MONSTERS[monName];
+    const maps = monsterToMaps[monName] || [];
+    itemToSources[itemName].push({
+      monName, monLevel: mon ? mon.level : null, monType: mon ? mon.type : null,
+      chance, count, maps, generic: false
+    });
+  }
+  // 遍历专属 DROPS（二大陆是 forEach 动态挂载的，此时已执行完）
+  for (const [monName, drops] of Object.entries(DROPS)) {
+    if (!Array.isArray(drops)) continue;
+    for (const d of drops) addItemSource(d.item, monName, d.chance, d.count);
+  }
+  // 遍历通用 GENERIC_DROPS（标注档位）
+  for (const [tier, table] of Object.entries(GENERIC_DROPS)) {
+    const lvRange = tier === "low" ? "Lvl≤20" : (tier === "mid" ? "Lvl 21-40" : "Lvl>40");
+    for (const d of table) {
+      if (!ITEMS[d.item]) continue;
+      if (!itemToSources[d.item]) itemToSources[d.item] = [];
+      itemToSources[d.item].push({
+        monName: `通用掉落(${lvRange})`, monLevel: null, monType: null,
+        chance: d.chance, count: d.count, maps: [], generic: true, tier: lvRange
+      });
+    }
+  }
+  // 每个 item 的 sources 按 chance 升序（最易得的在前）
+  for (const k in itemToSources) itemToSources[k].sort((a, b) => a.chance - b.chance);
+  _reverseIndex = { itemToSources, monsterToMaps };
+  return _reverseIndex;
+}
+
+// === Tab 切换 ===
+function switchTab(name, btn) {
+  document.querySelectorAll(".main-tab").forEach(t => t.classList.remove("active"));
+  document.querySelectorAll(".view").forEach(v => v.classList.remove("active"));
+  if (btn) btn.classList.add("active");
+  document.getElementById("view-" + name).classList.add("active");
+  if (name === "db") {
+    buildReverseIndex();
+    if (!document.getElementById("item-filter-type").options.length) initDbFilters();
+    renderItems();
+  }
+}
+
+function switchDbSection(section, btn) {
+  document.querySelectorAll(".db-nav-item").forEach(b => b.classList.remove("active"));
+  btn.classList.add("active");
+  document.querySelectorAll(".db-section").forEach(s => s.style.display = "none");
+  const el = document.getElementById("db-section-" + section);
+  el.style.display = "block";
+  if (section === "items") renderItems();
+  else if (section === "monsters") renderMonsters();
+  else if (section === "skills") renderSkills();
+}
+
+// === 初始化下拉选项 ===
+function initDbFilters() {
+  const types = ["", "weapon", "armor", "helmet", "necklace", "bracelet", "ring", "boots", "belt", "jade", "potion", "material", "skillbook"];
+  const typeNames = { "": "全部", weapon: "武器", armor: "衣服", helmet: "头盔", necklace: "项链", bracelet: "手镯", ring: "戒指", boots: "鞋子", belt: "腰带", jade: "宝玉", potion: "药水", material: "材料", skillbook: "技能书" };
+  const sel = document.getElementById("item-filter-type");
+  types.forEach(t => {
+    const o = document.createElement("option");
+    o.value = t; o.textContent = typeNames[t];
+    sel.appendChild(o);
+  });
+}
+
+const TYPE_NAMES = { weapon: "武器", armor: "衣服", helmet: "头盔", necklace: "项链", bracelet: "手镯", ring: "戒指", boots: "鞋子", belt: "腰带", jade: "宝玉", potion: "药水", material: "材料", skillbook: "技能书" };
+const JOB_NAMES = { mage: "法师", warrior: "战士", taoist: "道士", all: "通用" };
+const JOB_COLORS = { mage: "mage", warrior: "warrior", taoist: "taoist", all: "all" };
+
+function fmtRange(arr) { return arr && arr.length ? arr[0] + "-" + arr[1] : ""; }
+
+// === 装备物品渲染 ===
+let dbExpandedItem = null;
+function renderItems() {
+  const job = document.getElementById("item-filter-job").value;
+  const type = document.getElementById("item-filter-type").value;
+  const lvmin = parseInt(document.getElementById("item-filter-lvmin").value) || 0;
+  const lvmax = parseInt(document.getElementById("item-filter-lvmax").value) || 999;
+  const special = document.getElementById("item-filter-special").value;
+  const kw = document.getElementById("item-filter-kw").value.trim().toLowerCase();
+
+  let list = Object.entries(ITEMS).filter(([name, it]) => {
+    if (job && it.job !== job) return false;
+    if (type && it.type !== type) return false;
+    const lv = it.level || 0;
+    if (lv < lvmin || lv > lvmax) return false;
+    if (special === "yes" && !it.special) return false;
+    if (kw) {
+      const hay = (name + " " + (it.special || "") + " " + fmtRange(it.atk) + fmtRange(it.mc) + fmtRange(it.sc)).toLowerCase();
+      if (!hay.includes(kw)) return false;
+    }
+    return true;
+  });
+  list.sort((a, b) => (a[1].level || 0) - (b[1].level || 0));
+  document.getElementById("item-count").textContent = `${list.length} 件`;
+
+  const body = document.getElementById("items-body");
+  body.innerHTML = list.map(([name, it], i) => renderItemRow(name, it, i)).join("");
+}
+
+function renderItemRow(name, it, idx) {
+  const isExpanded = dbExpandedItem === name;
+  const jobTag = it.job ? `<span class="job-tag ${JOB_COLORS[it.job] || ""}">${JOB_NAMES[it.job] || it.job}</span>` : "";
+  const specialTag = it.special ? `<span class="special-tag">${it.special}</span>` : "";
+  const row = `<tr onclick="toggleItem('${name}')">
+    <td><b>${name}</b></td>
+    <td><span class="type-tag ${it.type}">${TYPE_NAMES[it.type] || it.type}</span></td>
+    <td>${jobTag}</td>
+    <td class="num">${it.level || "-"}</td>
+    <td class="num">${fmtRange(it.atk)}</td>
+    <td class="num">${fmtRange(it.mc)}</td>
+    <td class="num">${fmtRange(it.sc)}</td>
+    <td class="num">${fmtRange(it.def)}</td>
+    <td class="num">${fmtRange(it.magDef)}</td>
+    <td>${specialTag}</td>
+  </tr>`;
+  const detail = isExpanded ? `<tr class="db-detail-row"><td colspan="10">${renderItemDetail(name, it)}</td></tr>` : "";
+  return row + detail;
+}
+
+function renderItemDetail(name, it) {
+  const idx = buildReverseIndex();
+  const sources = (idx && idx.itemToSources && idx.itemToSources[name]) || [];
+  // 属性区
+  const stats = [];
+  if (it.atk) stats.push(["攻击", fmtRange(it.atk)]);
+  if (it.mc) stats.push(["魔法(MC)", fmtRange(it.mc)]);
+  if (it.sc) stats.push(["道术(SC)", fmtRange(it.sc)]);
+  if (it.def) stats.push(["防御", fmtRange(it.def)]);
+  if (it.magDef) stats.push(["魔防", fmtRange(it.magDef)]);
+  if (it.healHp) stats.push(["回血", it.healHp + " HP"]);
+  if (it.healMp) stats.push(["回蓝", it.healMp + " MP"]);
+  if (it.price) stats.push(["价格", it.price + " 金"]);
+  if (it.skill) stats.push(["技能", it.skill]);
+  if (it.special) stats.push(["特效", it.special]);
+  const statsHtml = stats.map(([l, v]) => `<div class="stat-item"><span class="lbl">${l}</span> <span class="val">${v}</span></div>`).join("");
+
+  // 掉落来源
+  let dropsHtml = '<div style="color:#666">无掉落数据（可能仅商店购买或任务获得）</div>';
+  if (sources.length) {
+    const monTypeText = { normal: "普通", elite: "精英", boss: "Boss" };
+    dropsHtml = sources.map(s => {
+      if (s.generic) {
+        return `<div class="drop-source generic"><span class="mon">📜 ${s.monName}</span> <span class="prob">概率 1/${s.chance}</span>${s.count ? ` ×${s.count}` : ""}</div>`;
+      }
+      const tt = s.monType ? monTypeText[s.monType] || s.monType : "";
+      const monTypeTag = tt ? `<span class="mtype-${s.monType}">[${tt}]</span> ` : "";
+      const mapsTag = s.maps.length
+        ? `<div class="maps">📍 ${s.maps.map(m => `${m.name}(L${m.levelReq}${m.continent===2?",二大陆":""})`).join("， ")}</div>`
+        : '<div class="maps" style="color:#666">📍 无地图记录</div>';
+      const lvTag = s.monLevel ? ` <span style="color:#888">Lv${s.monLevel}</span>` : "";
+      const cntTag = s.count ? ` ×${s.count}` : "";
+      return `<div class="drop-source"><span class="mon">${monTypeTag}${s.monName}</span>${lvTag} <span class="prob">概率 1/${s.chance}</span>${cntTag}${mapsTag}</div>`;
+    }).join("");
+  }
+  return `<div class="db-detail-content">
+    <div class="db-detail-section"><h4>📋 属性</h4><div class="stat-grid">${statsHtml}</div></div>
+    <div class="db-detail-section"><h4>📍 掉落来源（${sources.length}条，按概率从高到低）</h4>${dropsHtml}</div>
+  </div>`;
+}
+
+function toggleItem(name) { dbExpandedItem = dbExpandedItem === name ? null : name; renderItems(); }
+
+// === 怪物图鉴 ===
+let dbExpandedMon = null;
+function renderMonsters() {
+  const type = document.getElementById("mon-filter-type").value;
+  const cont = document.getElementById("mon-filter-cont").value;
+  const lvmin = parseInt(document.getElementById("mon-filter-lvmin").value) || 0;
+  const lvmax = parseInt(document.getElementById("mon-filter-lvmax").value) || 999;
+  const kw = document.getElementById("mon-filter-kw").value.trim().toLowerCase();
+  const { monsterToMaps } = buildReverseIndex();
+
+  let list = Object.entries(MONSTERS).filter(([name, m]) => {
+    if (type && m.type !== type) return false;
+    if (cont) {
+      const maps = monsterToMaps[name] || [];
+      if (!maps.some(m => m.continent == cont)) return false;
+    }
+    if (m.level < lvmin || m.level > lvmax) return false;
+    if (kw && !name.toLowerCase().includes(kw)) return false;
+    return true;
+  });
+  list.sort((a, b) => a[1].level - b[1].level);
+  document.getElementById("mon-count").textContent = `${list.length} 只`;
+
+  const body = document.getElementById("monsters-body");
+  body.innerHTML = list.map(([name, m]) => renderMonRow(name, m)).join("");
+}
+
+function renderMonRow(name, m) {
+  const { monsterToMaps } = buildReverseIndex();
+  const maps = monsterToMaps[name] || [];
+  const isExpanded = dbExpandedMon === name;
+  const typeCls = `mtype-${m.type}`;
+  const typeText = { normal: "普通", elite: "精英", boss: "Boss" }[m.type] || m.type;
+  const mapsShort = maps.slice(0, 2).map(x => x.name).join(",") + (maps.length > 2 ? ` 等${maps.length}` : "") || "无";
+  const skills = m.skills && m.skills.length ? `${m.skills.length}个` : "-";
+  const row = `<tr onclick="toggleMon('${name}')">
+    <td><b>${name}</b></td>
+    <td class="num">${m.level}</td>
+    <td class="${typeCls}">${typeText}</td>
+    <td class="num">${m.hp}</td>
+    <td class="num">${m.minAtk}-${m.maxAtk}</td>
+    <td class="num">${m.minDef || 0}</td>
+    <td class="num">${m.minMagDef || 0}</td>
+    <td class="num">${m.exp}</td>
+    <td class="num">${skills}</td>
+    <td style="font-size:11px;color:#90caf9">${mapsShort}</td>
+  </tr>`;
+  const detail = isExpanded ? `<tr class="db-detail-row"><td colspan="10">${renderMonDetail(name, m, maps)}</td></tr>` : "";
+  return row + detail;
+}
+
+function renderMonDetail(name, m, maps) {
+  // 技能
+  let skillsHtml = '<div style="color:#666">无技能</div>';
+  if (m.skills && m.skills.length) {
+    skillsHtml = m.skills.map(s => `<div class="stat-item"><span class="lbl">${s.name} [${s.type}]</span> <span class="val">概率${(s.chance*100).toFixed(0)}%${s.power?` 威力×${s.power}`:""}</span></div>`).join("");
+  }
+  // 掉落
+  let drops = DROPS[name];
+  if (!drops) {
+    const tier = m.level <= 20 ? "low" : (m.level <= 40 ? "mid" : "high");
+    drops = GENERIC_DROPS[tier];
+  }
+  const dropsHtml = (Array.isArray(drops) ? drops : []).filter(d => d.item !== "金币").slice(0, 20).map(d => {
+    const it = ITEMS[d.item];
+    const typeTag = it ? `<span class="type-tag ${it.type}">${TYPE_NAMES[it.type]||it.type}</span>` : "";
+    return `<div class="stat-item">${typeTag} <span class="val">${d.item}</span> <span class="lbl">1/${d.chance}</span></div>`;
+  }).join("") || '<div style="color:#666">无掉落</div>';
+  // 地图
+  const mapsHtml = maps.length ? maps.map(x => `<div class="stat-item"><span class="val">${x.name}</span> <span class="lbl">L${x.levelReq}${x.continent===2?" 二大陆":""} ×${x.count}</span></div>`).join("") : '<div style="color:#666">无地图记录</div>';
+  return `<div class="db-detail-content">
+    <div class="db-detail-section"><h4>⚔️ 怪物技能</h4><div class="stat-grid">${skillsHtml}</div></div>
+    <div class="db-detail-section"><h4>📦 掉落物品（前20）</h4><div class="stat-grid">${dropsHtml}</div></div>
+    <div class="db-detail-section"><h4>📍 所在地图</h4><div class="stat-grid">${mapsHtml}</div></div>
+  </div>`;
+}
+
+function toggleMon(name) { dbExpandedMon = dbExpandedMon === name ? null : name; renderMonsters(); }
+
+// === 技能库 ===
+let dbExpandedSkill = null;
+function renderSkills() {
+  const job = document.getElementById("skill-filter-job").value;
+  const type = document.getElementById("skill-filter-type").value;
+  const kw = document.getElementById("skill-filter-kw").value.trim().toLowerCase();
+  let list = Object.entries(SKILLS).filter(([name, s]) => {
+    if (job && s.job !== job) return false;
+    if (type && s.type !== type) return false;
+    if (kw && !name.toLowerCase().includes(kw) && !(s.desc || "").toLowerCase().includes(kw)) return false;
+    return true;
+  });
+  list.sort((a, b) => a[1].levelReq - b[1].levelReq);
+  document.getElementById("skill-count").textContent = `${list.length} 个`;
+  const body = document.getElementById("skills-body");
+  body.innerHTML = list.map(([name, s]) => {
+    const jobTag = `<span class="job-tag ${JOB_COLORS[s.job]||""}">${JOB_NAMES[s.job]||s.job}</span>`;
+    const isExpanded = dbExpandedSkill === name;
+    const row = `<tr onclick="dbExpandedSkill=dbExpandedSkill==='${name}'?null:'${name}';renderSkills()">
+      <td><b>${name}</b></td><td>${jobTag}</td><td>${{attack:"攻击",passive:"被动",buff:"增益",summon:"召唤",utility:"辅助",heal:"治疗"}[s.type]||s.type}</td>
+      <td class="num">${s.levelReq}</td><td class="num">+${(s.damageBonus*100).toFixed(0)}%</td>
+      <td class="num">${s.delay?`${s.delay}回合`:"无"}</td><td>${s.aoe?"AOE":""}</td>
+      <td style="font-size:11px;color:#b0bec5;max-width:240px">${(s.desc||"").slice(0,40)}</td>
+    </tr>`;
+    const detail = isExpanded ? `<tr class="db-detail-row"><td colspan="8"><div class="db-detail-content">
+      <div class="stat-grid">
+        <div class="stat-item"><span class="lbl">威力power</span> <span class="val">${s.power}</span></div>
+        <div class="stat-item"><span class="lbl">附加defPower</span> <span class="val">${s.defPower}</span></div>
+        <div class="stat-item"><span class="lbl">加成</span> <span class="val">+${(s.damageBonus*100).toFixed(0)}%</span></div>
+        <div class="stat-item"><span class="lbl">冷却</span> <span class="val">${s.delay?`${s.delay}回合`:"无冷却"}</span></div>
+      </div>
+      <div style="color:#b0bec5;font-size:12px;margin-top:6px">${s.desc||""}</div>
+    </div></td></tr>` : "";
+    return row + detail;
+  }).join("");
+}
+
