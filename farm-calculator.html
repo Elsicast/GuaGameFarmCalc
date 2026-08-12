@@ -135,12 +135,13 @@ tr.impractical td.map-name b { color: #ff9800; }
 /* === 数据库表格 === */
 .db-table { width: 100%; border-collapse: collapse; font-size: 12px; }
 .db-table th {
-  background: #0f1726; color: #4fc3f7; padding: 8px 6px; text-align: left;
+  background: #0f1726; color: #4fc3f7; padding: 8px 6px; text-align: center;
   border-bottom: 2px solid #30475e; position: sticky; top: 0; white-space: nowrap; cursor: pointer;
 }
 .db-table th:hover { background: #1a237e; }
-.db-table td { padding: 6px; border-bottom: 1px solid #1e2d3d; white-space: nowrap; }
-.db-table td.num { text-align: right; font-family: Consolas, monospace; }
+.db-table td { padding: 6px; border-bottom: 1px solid #1e2d3d; white-space: nowrap; text-align: center; }
+.db-table td:first-child { text-align: left; }
+.db-table td.num { font-family: Consolas, monospace; }
 .db-table td:empty::before { content: "—"; color: #555; }
 .db-table tr { cursor: pointer; }
 .db-table tr:hover { background: #1a237e33; }
