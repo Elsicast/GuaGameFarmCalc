@@ -673,6 +673,38 @@ const JOB_COLORS = { mage: "mage", warrior: "warrior", taoist: "taoist", all: "a
 
 function fmtRange(arr) { return arr && arr.length ? arr[0] + "-" + arr[1] : ""; }
 
+// 特殊装备效果说明（特效名 → 实际战斗效果描述，提炼自 game.js）
+const SPECIAL_EFFECTS = {
+  "传送": "每击杀30只小怪，下一波必定传送1只当前地图的BOSS过来",
+  "护身": "受到伤害的30%转化为MP消耗（MP耗尽后失效）",
+  "复活": "战斗中死亡时原地复活，恢复50%HP（每场战斗1次）",
+  "火焰": "每回合额外造成 maxAtk×30% 火焰伤害",
+  "超负载": "背包装备格 +10",
+  "防御": "每回合自动回复 maxHp×2% HP",
+  "记忆": "击杀怪物时5%概率召唤记忆幻影助战5回合（继承30%攻击力）",
+  "吸血": "造成伤害时吸取15%回复HP（嗜血战斧20%）",
+  "连击": "目标存活时25%概率追加一次物理攻击",
+  "麻痹": "攻击时15%概率麻痹目标，下回合无法行动",
+};
+
+// 物品悬浮提示文本（属性 + 特效描述），用于地区图鉴/掉落列表的 title 属性
+function itemTooltip(name) {
+  const it = ITEMS[name];
+  if (!it) return name;
+  const parts = [];
+  const r = k => it[k] ? fmtRange(it[k]) : "";
+  if (it.atk) parts.push("攻" + r("atk"));
+  if (it.mc) parts.push("魔" + r("mc"));
+  if (it.sc) parts.push("道" + r("sc"));
+  if (it.def) parts.push("防" + r("def"));
+  if (it.magDef) parts.push("魔防" + r("magDef"));
+  if (it.hp) parts.push("HP+" + it.hp);
+  if (it.healHp) parts.push("回血" + it.healHp);
+  if (it.healMp) parts.push("回蓝" + it.healMp);
+  if (it.special) parts.push("【" + it.special + "】" + (SPECIAL_EFFECTS[it.special] || ""));
+  return parts.join(" ") || name;
+}
+
 // === 装备物品渲染 ===
 let dbExpandedItem = null;
 function renderItems() {
@@ -712,7 +744,7 @@ function renderItems() {
 function renderItemRow(name, it, idx) {
   const isExpanded = dbExpandedItem === name;
   const jobTag = it.job ? `<span class="job-tag ${JOB_COLORS[it.job] || ""}">${JOB_NAMES[it.job] || it.job}</span>` : "";
-  const specialTag = it.special ? `<span class="special-tag">${it.special}</span>` : "";
+  const specialTag = it.special ? `<span class="special-tag" title="${it.special}：${SPECIAL_EFFECTS[it.special] || ""}">${it.special}</span>` : "";
   const row = `<tr onclick="toggleItem('${name}')">
     <td><b>${name}</b></td>
     <td><span class="type-tag ${it.type}">${TYPE_NAMES[it.type] || it.type}</span></td>
@@ -743,7 +775,7 @@ function renderItemDetail(name, it) {
   if (it.healMp) stats.push(["回蓝", it.healMp + " MP"]);
   if (it.price) stats.push(["价格", it.price + " 金"]);
   if (it.skill) stats.push(["技能", it.skill]);
-  if (it.special) stats.push(["特效", it.special]);
+  if (it.special) stats.push(["特效", it.special + "：" + (SPECIAL_EFFECTS[it.special] || "未知效果")]);
   const statsHtml = stats.map(([l, v]) => `<div class="stat-item"><span class="lbl">${l}</span> <span class="val">${v}</span></div>`).join("");
 
   // 掉落来源
@@ -838,7 +870,7 @@ function renderMonDetail(name, m, maps) {
   const dropsHtml = (Array.isArray(drops) ? drops : []).filter(d => d.item !== "金币").slice(0, 20).map(d => {
     const it = ITEMS[d.item];
     const typeTag = it ? `<span class="type-tag ${it.type}">${TYPE_NAMES[it.type]||it.type}</span>` : "";
-    return `<div class="stat-item">${typeTag} <span class="val">${d.item}</span> <span class="lbl">1/${d.chance}</span></div>`;
+    return `<div class="stat-item" title="${itemTooltip(d.item)}">${typeTag} <span class="val">${d.item}</span> <span class="lbl">1/${d.chance}</span></div>`;
   }).join("") || '<div style="color:#666">无掉落</div>';
   // 地图
   const mapsHtml = maps.length ? maps.map(x => `<div class="stat-item"><span class="val">${x.name}</span> <span class="lbl">L${x.levelReq}${x.continent===2?" 二大陆":""} ×${x.count}</span></div>`).join("") : '<div style="color:#666">无地图记录</div>';
@@ -872,7 +904,7 @@ function renderGenericDrops() {
         const it = ITEMS[d.item];
         const typeTag = it ? `<span class="type-tag ${it.type}">${TYPE_NAMES[it.type]||it.type}</span>` : "";
         const cntTag = d.count ? ` ×${d.count}` : "";
-        return `<span class="region-gen-item">${typeTag}<b>${d.item}</b><span class="prob">1/${d.chance}</span>${cntTag}</span>`;
+        return `<span class="region-gen-item" title="${itemTooltip(d.item)}">${typeTag}<b>${d.item}</b><span class="prob">1/${d.chance}</span>${cntTag}</span>`;
       }).join("");
       return `<div class="region-gen-tier">
         <div class="region-gen-tier-label" style="color:${info.color}">${info.label}</div>
@@ -901,9 +933,10 @@ function resolveDropTable(name) {
 // 单个掉落条目渲染（复用于专属掉落）
 function renderDropEntry(d) {
   const it = ITEMS[d.item];
+  const tip = itemTooltip(d.item);
   const typeTag = it ? `<span class="type-tag ${it.type}">${TYPE_NAMES[it.type]||it.type}</span>` : "";
   const cntTag = d.count ? ` ×${d.count}` : "";
-  return `<span class="region-drop-item">${typeTag}<b>${d.item}</b><span class="prob">1/${d.chance}</span>${cntTag}</span>`;
+  return `<span class="region-drop-item" title="${tip}">${typeTag}<b>${d.item}</b><span class="prob">1/${d.chance}</span>${cntTag}</span>`;
 }
 
 // 渲染单张地图卡片（全部展开，不折叠）
