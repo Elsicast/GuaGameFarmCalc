@@ -5509,18 +5509,21 @@ function recommendSkills(job, tierLv, slots) {
     for (const e of aoeAttacks) { if (full()) break; push(e, "AOE输出"); }
     for (const e of singleAttacks) { if (full()) break; push(e, "单体输出"); }
   } else if (job === "taoist") {
-    // 道士：召唤(宝宝群攻) → 隐身术(配合召唤近乎无敌,100%仇恨转移) → AOE(瘟疫/毒云) → 阴阳盾减伤 → 施毒术 → 单体
-    if (summons.length > 0) push(summons[0], "召唤宝宝");
+    // 道士：召唤技能全带(每个技能1只宝宝,共存且全部群攻全场,伤害累加) → 隐身术(配合召唤近乎无敌)
+    //   → 减伤buff(阴阳盾) → 施毒术 → 单体/被动
+    // 数据验证: 3召唤(Σbonus1.6)清波2335 > 1召唤+2AOE的2131, 召唤群攻不扣防且0蓝耗
+    for (const e of summons) { if (full()) break; push(e, "召唤群攻"); }
     // 隐身术：delay=6触发6回合隐身=100%覆盖率，怪物强制打宝宝（需有召唤物），近乎无敌
     const stealth = available.find(e => e[0] === "隐身术" || e[0] === "集体隐身术");
     if (stealth && summons.length > 0 && !full()) push(stealth, "隐身无敌");
-    for (const e of aoeAttacks) { if (full()) break; push(e, "AOE输出"); }
-    // 阴阳盾等减伤 buff（隐身术 damageBonus=0 不在 buffs top，单独处理过；这里取有减伤值的）
+    // 减伤 buff（阴阳盾等，隐身术 damageBonus=0 已单独处理）
     const defBuff = buffs.find(e => e[1].damageBonus > 0);
     if (defBuff && !full()) push(defBuff, "减伤" + Math.round(defBuff[1].damageBonus * 100) + "%");
     // 施毒术（道士核心 DOT，独立通道）
     const poison = singleAttacks.find(e => e[0] === "施毒术");
     if (poison && !full()) push(poison, "持续毒伤");
+    // AOE DOT（瘟疫/毒云，若还有空槽）
+    for (const e of aoeAttacks) { if (full()) break; push(e, "AOE输出"); }
     if (singleAttacks.length > 0 && !full()) {
       const main = singleAttacks.find(e => e[0] !== "施毒术") || singleAttacks[0];
       push(main, "单体输出");
