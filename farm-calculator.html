@@ -5582,13 +5582,16 @@ function recommendEquip(job, tierLv) {
       if (mdl != null && mdl > tierLv + ACQ_MARGIN) return false;
       return true;
     });
-    // 排序：输出类槽位(武器/戒指/项链)按主属性上限；防具类(衣服/头盔/手镯/鞋子/腰带/宝玉)按防御(def+magDef上限之和)
+    // 排序：输出类槽位(武器/戒指/项链)按主属性上限；防具类(衣服/头盔/手镯/鞋子/腰带/宝玉)按物防优先
+    // 注：承伤公式(app.js calcMap 第288行)只用 minDef/maxDef 物防，magDef 不参与减伤 → 防具优先堆物防
     const isDefSlot = ["armor", "helmet", "bracelet", "boots", "belt", "jade"].includes(slot.type);
     const sorted = candidates.sort((a, b) => {
       if (isDefSlot) {
-        const da = (a[1].def ? a[1].def[1] : 0) + (a[1].magDef ? a[1].magDef[1] : 0);
-        const db = (b[1].def ? b[1].def[1] : 0) + (b[1].magDef ? b[1].magDef[1] : 0);
-        return db - da;
+        // 物防上限优先；物防相同再比魔防（聊胜于无）
+        const da = a[1].def ? a[1].def[1] : 0, db_ = b[1].def ? b[1].def[1] : 0;
+        if (db_ !== da) return db_ - da;
+        const ma = a[1].magDef ? a[1].magDef[1] : 0, mb = b[1].magDef ? b[1].magDef[1] : 0;
+        return mb - ma;
       }
       const va = (a[1][mainStat] ? a[1][mainStat][1] : -1);
       const vb = (b[1][mainStat] ? b[1][mainStat][1] : -1);
@@ -5596,9 +5599,50 @@ function recommendEquip(job, tierLv) {
     });
     // 取 count 个推荐（手镯/戒指取2个）+ 备选列表（top 5，去重已推荐的）
     const ALT_MAX = 5; // 每个槽位最多展示5个备选
-    // 推荐：游戏允许双槽装同名装备，手镯/戒指取 top1 重复 count 次（同名×2，属性最优）
     const picks = [];
-    if (sorted.length > 0) {
+    // 手镯双槽特殊处理：1个攻击型(主属性最高) + 1个物防型(物防最高)，物防/魔防互补不重复
+    // 理由：手镯是少数能加主属性的防具槽，攻击型价值高；承伤只算物防，防御位选物防最实用
+    if (slot.type === "bracelet" && slot.count === 2) {
+      // 攻击型：按主属性上限排序
+      const byAtk = [...candidates].sort((a, b) => {
+        const va = a[1][mainStat] ? a[1][mainStat][1] : -1;
+        const vb = b[1][mainStat] ? b[1][mainStat][1] : -1;
+        return vb - va;
+      });
+      // 物防型：按物防上限排序（跳过已选的攻击型同名件）
+      const byDef = [...candidates].sort((a, b) => {
+        const da = a[1].def ? a[1].def[1] : 0, db_ = b[1].def ? b[1].def[1] : 0;
+        return db_ - da;
+      });
+      const mkPick = (entry) => {
+        const [name, it] = entry;
+        const mdl = minDropLv(name);
+        return { name, item: it, mainVal: it[mainStat] ? it[mainStat][1] : 0,
+          special: it.special || null, equipLv: it.level || 0,
+          dropLv: mdl != null ? mdl : (it.level || tierLv), dup: false };
+      };
+      // 是否存在真正的攻击型手镯（主属性上限≥1）？没有则双槽都按物防选
+      const hasAtkBracelet = byAtk.length > 0 && (byAtk[0][1][mainStat] ? byAtk[0][1][mainStat][1] : 0) >= 1;
+      if (hasAtkBracelet) {
+        const atkPick = mkPick(byAtk[0]);
+        picks.push(atkPick);
+        // 第二个：物防型，优先选与攻击型不同的装备；若候选不足则回落同名×2
+        const defCandidate = byDef.find(([n]) => n !== atkPick.name);
+        if (defCandidate) {
+          picks.push(mkPick(defCandidate));
+        } else if (byDef.length > 0) {
+          picks.push(mkPick(byDef[0]));
+        } else {
+          picks.push(atkPick); // 回落：同名×2
+        }
+      } else if (byDef.length > 0) {
+        // 无攻击型手镯：双槽都选物防最高的（取 top1 + top2，允许同名×2）
+        picks.push(mkPick(byDef[0]));
+        const second = byDef.find(([n]) => n !== byDef[0][0]);
+        picks.push(second ? mkPick(second) : mkPick(byDef[0]));
+      }
+    } else if (sorted.length > 0) {
+      // 其他双槽(戒指)：游戏允许同名×2，取 top1 重复 count 次（属性最优）
       const [name, it] = sorted[0];
       const mainVal = it[mainStat] ? it[mainStat][1] : 0;
       const mdl = minDropLv(name);
