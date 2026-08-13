@@ -1328,14 +1328,18 @@ function recommendSkills(job, tierLv, slots, stats) {
     if (passives.length > 0 && !full()) push(passives[0], "被动加成");
     if (heals.length > 0 && !full()) push(heals[0], "回血");
   } else {
-    // 战士：AOE优先(半月弯刀/剑气爆) → 单体最多1个(MP少) → 护身气幕减伤 → 被动
+    // 战士：无隐身无召唤，怪物直接打玩家 → 减伤buff(护身气幕)必带(直接省红药,净金+1084/分)
+    //   AOE优先(半月弯刀/剑气爆) → 护身气幕减伤 → 单体最多2个(MP少) → 被动
+    // 数据验证(Lv50石墓阵): 2AOE+3单体+护身气幕 净金7379 > 2AOE+4单体无减伤 净金6295
     for (const e of aoeAttacks) { if (full()) break; push(e, "AOE输出"); }
-    // 战士 MP 少，单体最多带 1 个最强
-    if (singleAttacks.length > 0 && !full()) push(singleAttacks[0], "单体输出");
-    if (buffs.length > 0 && !full()) push(buffs[0], "减伤" + Math.round(buffs[0][1].damageBonus * 100) + "%");
+    // 护身气幕必带（Lv39+解锁；战士无隐身，减伤直接降低红药成本）
+    const defBuff = buffs.find(e => e[1].damageBonus > 0);
+    if (defBuff && !full()) push(defBuff, "减伤" + Math.round(defBuff[1].damageBonus * 100) + "%");
+    // 单体输出：战士 MP 少（Lv50 仅 243），最多带 2 个单体（4MP/回合，可撑 60 回合）
+    for (let i = 0; i < 2 && i < singleAttacks.length; i++) { if (full()) break; push(singleAttacks[i], "单体输出"); }
     if (passives.length > 0 && !full()) push(passives[0], "被动加成");
-    // 剩余空槽补次强单体
-    for (const e of singleAttacks.slice(1)) { if (full()) break; push(e, "单体输出"); }
+    // 剩余空槽补第3个单体或被动
+    for (const e of singleAttacks.slice(2)) { if (full()) break; push(e, "单体输出"); }
   }
 
   return picked.slice(0, slots);
@@ -1362,6 +1366,8 @@ function renderRecommend() {
     hintExtra = " · 阴阳盾阈值：SC≥20时宝宝够硬(总HP≥980撑10+回合)，隐身100%覆盖怪物全打宝宝，不带阴阳盾省槽装输出；SC<20宝宝脆易死需阴阳盾保命";
   } else if (job === "mage") {
     hintExtra = " · 减伤buff优先(魔法盾+分身术叠加70%减伤) · AOE不耗蓝打全场，单体耗蓝只打主目标故不推荐";
+  } else if (job === "warrior") {
+    hintExtra = " · 无隐身/召唤，怪物直接打玩家 → 护身气幕必带(40%减伤直接省红药，净金+1084/分) · 单体最多2个(MP少)";
   }
   hint.textContent = `${JOB_NAMES_FULL[job]} 推荐配装 · 主属性：${mainStatName}` + hintExtra;
 
