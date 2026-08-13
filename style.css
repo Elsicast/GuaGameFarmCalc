@@ -223,3 +223,51 @@ tr.impractical td.map-name b { color: #ff9800; }
 .region-drops-empty { color: #666; font-size: 11px; margin-top: 3px; }
 .region-drops-generic { color: #90caf9; font-size: 11px; margin-top: 3px; font-style: italic; }
 
+/* === 装备推荐 === */
+.recommend-job-tabs { display: flex; gap: 8px; margin-bottom: 12px; }
+.recommend-job-btn {
+  padding: 6px 18px; background: #1a237e; color: #b0bec5; border: 1px solid #283593;
+  border-radius: 4px; cursor: pointer; font-size: 14px; transition: all 0.15s;
+}
+.recommend-job-btn:hover { background: #283593; color: #fff; }
+.recommend-job-btn.active { background: #1976d2; color: #fff; border-color: #1976d2; font-weight: bold; }
+
+.rec-tier-card {
+  background: #0f1726; border: 1px solid #1e2a47; border-radius: 6px;
+  margin-bottom: 14px; overflow: hidden;
+}
+.rec-tier-header {
+  background: #1a237e; padding: 7px 12px; font-size: 14px; color: #fff;
+  display: flex; align-items: center; justify-content: space-between;
+}
+.rec-slots { font-size: 12px; color: #ffd700; }
+.rec-section { padding: 8px 12px; }
+.rec-section:not(:last-child) { border-bottom: 1px solid #1e2a47; }
+.rec-section-title { color: #4fc3f7; font-size: 12px; font-weight: bold; margin-bottom: 6px; }
+
+.rec-equip-row {
+  display: flex; align-items: baseline; gap: 8px; padding: 3px 0;
+  font-size: 12px; border-bottom: 1px solid rgba(30,42,71,0.5);
+}
+.rec-slot { color: #888; min-width: 64px; flex-shrink: 0; }
+.rec-items { display: flex; flex-wrap: wrap; gap: 4px; align-items: baseline; }
+.rec-item {
+  background: #16213e; padding: 2px 6px; border-radius: 3px; cursor: help;
+  display: inline-flex; align-items: center; gap: 4px;
+}
+.rec-item .rec-stat { color: #b0bec5; font-size: 10px; }
+.rec-special {
+  background: #4a148c; color: #e1bee7; padding: 0 4px; border-radius: 2px; font-size: 10px;
+}
+.rec-empty { color: #666; font-size: 11px; }
+
+.rec-skills { display: flex; flex-wrap: wrap; gap: 6px; }
+.rec-skill {
+  background: #16213e; padding: 4px 8px; border-radius: 4px; font-size: 12px;
+  border-left: 3px solid #1976d2; cursor: help; display: inline-flex; align-items: center; gap: 4px;
+}
+.rec-skill .rec-skill-bonus { color: #66bb6a; font-size: 10px; }
+.rec-skill .rec-aoe { color: #ff9800; font-size: 10px; font-weight: bold; }
+.rec-skill .rec-reason { color: #888; font-size: 10px; }
+
+

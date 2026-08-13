@@ -639,6 +639,8 @@ function switchTab(name, btn) {
     buildReverseIndex();
     if (!document.getElementById("item-filter-type").options.length) initDbFilters();
     renderItems();
+  } else if (name === "recommend") {
+    renderRecommend();
   }
 }
 
@@ -1182,4 +1184,188 @@ function renderTowerDetail(f, mons) {
 }
 
 function toggleTower(floor) { dbExpandedTower = dbExpandedTower === floor ? null : floor; renderTower(); }
+
+/* ===================================================================
+ * 装备技能推荐
+ * 按职业×等级分档自动推荐最优装备组合 + 技能搭配
+ * =================================================================== */
+
+// 等级分档（对应技能槽位阶梯：Lv20→4槽/Lv35→5槽/Lv50→6槽）
+const RECOMMEND_TIERS = [
+  { lv: 7,  label: "Lv7 初学",  slots: 3 },
+  { lv: 15, label: "Lv15 成长", slots: 3 },
+  { lv: 25, label: "Lv25 进阶", slots: 4 },
+  { lv: 35, label: "Lv35 高级", slots: 5 },
+  { lv: 50, label: "Lv50 毕业", slots: 6 },
+];
+// 各职业主属性字段（战士堆物攻DC/法师堆魔法MC/道士堆道术SC）
+const JOB_MAIN_STAT = { warrior: "atk", mage: "mc", taoist: "sc" };
+const JOB_NAMES_FULL = { warrior: "战士", mage: "法师", taoist: "道士" };
+// 装备槽位定义（顺序即展示顺序；bracelet/ring 各占2槽）
+const EQUIP_SLOTS = [
+  { type: "weapon",   label: "武器", count: 1 },
+  { type: "armor",    label: "衣服", count: 1 },
+  { type: "helmet",   label: "头盔", count: 1 },
+  { type: "necklace", label: "项链", count: 1 },
+  { type: "bracelet", label: "手镯", count: 2 },
+  { type: "ring",     label: "戒指", count: 2 },
+  { type: "boots",    label: "鞋子", count: 1 },
+  { type: "belt",     label: "腰带", count: 1 },
+  { type: "jade",     label: "宝玉", count: 1 },
+];
+
+let recommendJob = "warrior";
+
+function setRecommendJob(job, btn) {
+  recommendJob = job;
+  document.querySelectorAll(".recommend-job-btn").forEach(b => b.classList.remove("active"));
+  if (btn) btn.classList.add("active");
+  renderRecommend();
+}
+
+// 装备推荐：对每个槽位选出该职业该等级能穿的主属性最高的装备
+function recommendEquip(job, tierLv) {
+  const mainStat = JOB_MAIN_STAT[job];
+  const baseStats = getJobBaseStats(job, tierLv);
+  // 力量戒指门槛：该等级基础物攻上限
+  const baseAtkMax = baseStats.maxAtk;
+  const results = [];
+  for (const slot of EQUIP_SLOTS) {
+    // 筛选该槽位可用装备
+    const candidates = Object.entries(ITEMS).filter(([name, it]) => {
+      if (it.type !== slot.type) return false;
+      if (it.job && it.job !== job && it.job !== "all") return false;
+      // 等级要求（无 level 字段的不受等级限，如药水；但装备一般有 level）
+      if (it.level && it.level > tierLv) return false;
+      // 力量戒指类 needAtk 门槛
+      if (it.needAtk && baseAtkMax < it.needAtk) return false;
+      // 跳过非装备类型（技能书/药水/材料不会进这些槽位，但保险）
+      if (["skillbook", "potion", "material", "buff"].includes(it.type)) return false;
+      return true;
+    });
+    // 排序：输出类槽位(武器/戒指/项链)按主属性上限；防具类(衣服/头盔/手镯/鞋子/腰带/宝玉)按防御(def+magDef上限之和)
+    const isDefSlot = ["armor", "helmet", "bracelet", "boots", "belt", "jade"].includes(slot.type);
+    const sorted = candidates.sort((a, b) => {
+      if (isDefSlot) {
+        // 防具：按 def上限 + magDef上限 之和降序；无防具属性的按 0
+        const da = (a[1].def ? a[1].def[1] : 0) + (a[1].magDef ? a[1].magDef[1] : 0);
+        const db = (b[1].def ? b[1].def[1] : 0) + (b[1].magDef ? b[1].magDef[1] : 0);
+        return db - da;
+      }
+      // 输出类：按主属性上限降序
+      const va = (a[1][mainStat] ? a[1][mainStat][1] : -1);
+      const vb = (b[1][mainStat] ? b[1][mainStat][1] : -1);
+      return vb - va;
+    });
+    // 取 count 个（手镯/戒指取2个，允许同名）
+    const picks = [];
+    for (let i = 0; i < slot.count && i < sorted.length; i++) {
+      const [name, it] = sorted[i];
+      const mainVal = it[mainStat] ? it[mainStat][1] : 0;
+      picks.push({ name, item: it, mainVal, special: it.special || null });
+    }
+    results.push({ slot, picks });
+  }
+  return results;
+}
+
+// 技能推荐：选出该等级能学且最强的 N 个技能
+function recommendSkills(job, tierLv, slots) {
+  const available = Object.entries(SKILLS).filter(([n, s]) => s.job === job && s.levelReq <= tierLv);
+  // 分类
+  const aoeAttacks = available.filter(([n, s]) => s.type === "attack" && s.aoe).sort((a, b) => b[1].damageBonus - a[1].damageBonus);
+  const singleAttacks = available.filter(([n, s]) => s.type === "attack" && !s.aoe).sort((a, b) => b[1].damageBonus - a[1].damageBonus);
+  const buffs = available.filter(([n, s]) => s.type === "buff").sort((a, b) => b[1].damageBonus - a[1].damageBonus);
+  const summons = available.filter(([n, s]) => s.type === "summon").sort((a, b) => b[1].damageBonus - a[1].damageBonus);
+  const heals = available.filter(([n, s]) => s.type === "heal").sort((a, b) => b[1].damageBonus - a[1].damageBonus);
+  const passives = available.filter(([n, s]) => s.type === "passive").sort((a, b) => b[1].damageBonus - a[1].damageBonus);
+
+  const picked = [];
+  const pickedNames = new Set();
+  const push = (entry, reason) => {
+    if (!entry || pickedNames.has(entry[0])) return false;
+    pickedNames.add(entry[0]);
+    picked.push({ name: entry[0], skill: entry[1], reason });
+    return true;
+  };
+
+  // 策略：优先 AOE 输出 → 单体输出 → 召唤(道士) → 减伤buff → 被动 → 治疗
+  // 1. 最强 AOE（如果有）
+  if (aoeAttacks.length > 0) push(aoeAttacks[0], "主力AOE");
+  // 2. 最强单体攻击
+  if (singleAttacks.length > 0) push(singleAttacks[0], singleAttacks[0][1].aoe ? "AOE输出" : "单体输出");
+  // 3. 第二强攻击（AOE或单体，取 damageBonus 更高的）
+  const allAttacks = [...aoeAttacks, ...singleAttacks].sort((a, b) => b[1].damageBonus - a[1].damageBonus);
+  if (allAttacks[1]) push(allAttacks[1], allAttacks[1][1].aoe ? "AOE输出" : "单体输出");
+  // 4. 召唤（道士核心）
+  if (summons.length > 0) push(summons[0], "召唤宝宝");
+  // 5. 减伤 buff（法师魔法盾/分身、道士阴阳盾、战士护身气幕）
+  if (buffs.length > 0) push(buffs[0], "减伤增益");
+  // 6. 被动（战士基本剑术/道士精神力战法）
+  if (passives.length > 0) push(passives[0], "被动加成");
+  // 7. 治疗（道士治愈术）
+  if (heals.length > 0) push(heals[0], "回血");
+  // 8. 还没填满，继续补剩余攻击技能
+  for (const e of allAttacks.slice(2)) {
+    if (picked.length >= slots) break;
+    push(e, e[1].aoe ? "AOE输出" : "单体输出");
+  }
+
+  return picked.slice(0, slots);
+}
+
+// 装备属性摘要文本（用于展示）
+function equipStatSummary(it, job) {
+  const mainStat = JOB_MAIN_STAT[job];
+  const parts = [];
+  if (it[mainStat]) parts.push(fmtRange(it[mainStat]));
+  if (it.def) parts.push("防" + fmtRange(it.def));
+  if (it.magDef) parts.push("魔防" + fmtRange(it.magDef));
+  if (it.hp) parts.push("HP+" + it.hp);
+  if (it.special) parts.push("【" + it.special + "】");
+  return parts.join(" ");
+}
+
+function renderRecommend() {
+  const job = recommendJob;
+  const hint = document.getElementById("recommend-hint");
+  const mainStatName = { warrior: "物攻(DC)", mage: "魔法(MC)", taoist: "道术(SC)" }[job];
+  hint.textContent = `${JOB_NAMES_FULL[job]} 推荐配装 · 主属性：${mainStatName} · 装备按主属性上限自动选取 · 技能按伤害/效用自动搭配`;
+
+  const body = document.getElementById("recommend-body");
+  body.innerHTML = RECOMMEND_TIERS.map(tier => {
+    const equips = recommendEquip(job, tier.lv);
+    const skills = recommendSkills(job, tier.lv, tier.slots);
+
+    // 装备列表
+    const equipHtml = equips.map(({ slot, picks }) => {
+      if (picks.length === 0) {
+        return `<div class="rec-equip-row"><span class="rec-slot">${slot.label}</span><span class="rec-empty">无可用装备</span></div>`;
+      }
+      const itemsHtml = picks.map(p => {
+        const tip = itemTooltip(p.name);
+        const specialTag = p.special ? `<span class="rec-special">${p.special}</span>` : "";
+        return `<span class="rec-item" title="${tip}"><b>${p.name}</b> <span class="rec-stat">${equipStatSummary(p.item, job)}</span>${specialTag}</span>`;
+      }).join(" + ");
+      return `<div class="rec-equip-row"><span class="rec-slot">${slot.label}${slot.count>1?" ×"+slot.count:""}</span><span class="rec-items">${itemsHtml}</span></div>`;
+    }).join("");
+
+    // 技能列表
+    const skillsHtml = skills.length ? skills.map(s => {
+      const bonus = `+${(s.skill.damageBonus*100).toFixed(0)}%`;
+      const aoeTag = s.skill.aoe ? " <span class='rec-aoe'>AOE</span>" : "";
+      return `<span class="rec-skill" title="${s.skill.desc||""}"><b>${s.name}</b>${aoeTag} <span class="rec-skill-bonus">${bonus}</span> <span class="rec-reason">${s.reason}</span></span>`;
+    }).join("") : '<span class="rec-empty">该等级无可学技能</span>';
+
+    return `<div class="rec-tier-card">
+      <div class="rec-tier-header">
+        <b>${tier.label}</b>
+        <span class="rec-slots">技能槽 ×${tier.slots}</span>
+      </div>
+      <div class="rec-section"><div class="rec-section-title">⚔️ 装备推荐</div>${equipHtml}</div>
+      <div class="rec-section"><div class="rec-section-title">✨ 技能推荐（${skills.length}/${tier.slots}）</div><div class="rec-skills">${skillsHtml}</div></div>
+    </div>`;
+  }).join("");
+}
+
 

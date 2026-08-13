@@ -4,6 +4,7 @@
 <div class="main-tabs">
   <button class="main-tab active" onclick="switchTab('calc', this)">⚡ Farm 计算器</button>
   <button class="main-tab" onclick="switchTab('db', this)">📖 游戏数据库</button>
+  <button class="main-tab" onclick="switchTab('recommend', this)">🎯 装备推荐</button>
 </div>
 
 <!-- ============ View 1: Farm 计算器 ============ -->
@@ -201,3 +202,14 @@
     </div>
   </div>
 </div><!-- /view-db -->
+
+<!-- 装备推荐 -->
+<div id="view-recommend" class="view">
+  <div class="recommend-job-tabs">
+    <button class="recommend-job-btn active" onclick="setRecommendJob('warrior', this)">⚔️ 战士</button>
+    <button class="recommend-job-btn" onclick="setRecommendJob('mage', this)">🔮 法师</button>
+    <button class="recommend-job-btn" onclick="setRecommendJob('taoist', this)">🍃 道士</button>
+  </div>
+  <p class="hint" id="recommend-hint"></p>
+  <div id="recommend-body"></div>
+</div><!-- /view-recommend -->
