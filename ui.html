@@ -57,6 +57,7 @@
     <div class="db-sidenav">
       <button class="db-nav-item active" onclick="switchDbSection('items', this)">⚔️ 装备物品</button>
       <button class="db-nav-item" onclick="switchDbSection('monsters', this)">👹 怪物图鉴</button>
+      <button class="db-nav-item" onclick="switchDbSection('regions', this)">🗺️ 地区图鉴</button>
       <button class="db-nav-item" onclick="switchDbSection('skills', this)">✨ 技能库</button>
       <button class="db-nav-item" onclick="switchDbSection('tower', this)">🗼 通天塔</button>
     </div>
@@ -125,6 +126,21 @@
             <tbody id="monsters-body"></tbody>
           </table>
         </div>
+      </div>
+      <!-- 地区图鉴 -->
+      <div id="db-section-regions" class="db-section" style="display:none;">
+        <div class="filter-bar">
+          <label>大陆</label>
+          <select id="region-filter-cont" onchange="renderRegions()">
+            <option value="">全部</option>
+            <option value="1">一大陆</option>
+            <option value="2">二大陆</option>
+          </select>
+          <input type="text" id="region-filter-kw" placeholder="🔍 搜索地图名/怪物名..." oninput="renderRegions()">
+          <span class="filter-count" id="region-count"></span>
+        </div>
+        <div id="region-generic-drops"></div>
+        <div id="regions-body" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(360px,1fr));gap:12px;align-items:start;"></div>
       </div>
       <!-- 技能库 -->
       <div id="db-section-skills" class="db-section" style="display:none;">

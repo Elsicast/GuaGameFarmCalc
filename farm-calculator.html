@@ -188,6 +188,49 @@ tr.impractical td.map-name b { color: #ff9800; }
 .stat-grid .stat-item .lbl { color: #888; }
 .stat-grid .stat-item .val { color: #fff; }
 
+/* === 地区图鉴 === */
+.region-generic-panel {
+  background: #0f1726; border: 1px solid #1e2a47; border-radius: 6px;
+  padding: 10px 12px; margin-bottom: 14px;
+}
+.region-generic-title { color: #4fc3f7; font-size: 13px; margin-bottom: 8px; font-weight: bold; }
+.region-gen-tier { margin-bottom: 8px; }
+.region-gen-tier:last-child { margin-bottom: 0; }
+.region-gen-tier-label { font-size: 12px; font-weight: bold; margin-bottom: 4px; }
+.region-gen-items { display: flex; flex-wrap: wrap; gap: 5px; }
+.region-gen-item {
+  background: #16213e; padding: 2px 6px; border-radius: 3px; font-size: 11px;
+  display: inline-flex; align-items: center; gap: 3px; color: #fff;
+}
+.region-gen-item .prob { color: #888; font-size: 10px; }
+
+.region-card {
+  background: #0f1726; border: 1px solid #1e2a47; border-radius: 6px;
+  padding: 0; overflow: hidden;
+}
+.region-card-header {
+  background: #1a237e; padding: 6px 10px; font-size: 13px; color: #fff;
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+}
+.region-card-lv { margin-left: auto; font-size: 11px; color: #90caf9; }
+.region-mons { padding: 6px; display: grid; gap: 6px; }
+.region-mon {
+  background: #16213e; border-radius: 4px; padding: 5px 8px;
+  border-left: 3px solid #37474f;
+}
+.region-mon-head { font-size: 12px; display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
+.region-mon-meta { color: #888; font-size: 11px; }
+.region-pct { color: #ffd700; font-weight: bold; }
+.region-drops { margin-top: 4px; display: flex; flex-wrap: wrap; gap: 4px; }
+.region-drop-item {
+  background: #0d1b2a; padding: 1px 5px; border-radius: 3px; font-size: 11px;
+  display: inline-flex; align-items: center; gap: 3px; color: #fff;
+}
+.region-drop-item .prob { color: #888; font-size: 10px; }
+.region-drops-empty { color: #666; font-size: 11px; margin-top: 3px; }
+.region-drops-generic { color: #90caf9; font-size: 11px; margin-top: 3px; font-style: italic; }
+
+
 </style>
 </head>
 <body>
@@ -250,6 +293,7 @@ tr.impractical td.map-name b { color: #ff9800; }
     <div class="db-sidenav">
       <button class="db-nav-item active" onclick="switchDbSection('items', this)">⚔️ 装备物品</button>
       <button class="db-nav-item" onclick="switchDbSection('monsters', this)">👹 怪物图鉴</button>
+      <button class="db-nav-item" onclick="switchDbSection('regions', this)">🗺️ 地区图鉴</button>
       <button class="db-nav-item" onclick="switchDbSection('skills', this)">✨ 技能库</button>
       <button class="db-nav-item" onclick="switchDbSection('tower', this)">🗼 通天塔</button>
     </div>
@@ -318,6 +362,21 @@ tr.impractical td.map-name b { color: #ff9800; }
             <tbody id="monsters-body"></tbody>
           </table>
         </div>
+      </div>
+      <!-- 地区图鉴 -->
+      <div id="db-section-regions" class="db-section" style="display:none;">
+        <div class="filter-bar">
+          <label>大陆</label>
+          <select id="region-filter-cont" onchange="renderRegions()">
+            <option value="">全部</option>
+            <option value="1">一大陆</option>
+            <option value="2">二大陆</option>
+          </select>
+          <input type="text" id="region-filter-kw" placeholder="🔍 搜索地图名/怪物名..." oninput="renderRegions()">
+          <span class="filter-count" id="region-count"></span>
+        </div>
+        <div id="region-generic-drops"></div>
+        <div id="regions-body" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(360px,1fr));gap:12px;align-items:start;"></div>
       </div>
       <!-- 技能库 -->
       <div id="db-section-skills" class="db-section" style="display:none;">
@@ -4360,27 +4419,31 @@ function calcMap(map, player, stats, _dps, mpPerTurn, parts) {
     const w = entry.count / totalWeight;
     const single = singleDmgToMon(parts, mon); // 主目标单点流（扣该怪自身防/魔防）
     const aoe = aoeDmgToMon(parts, mon);       // 每只AOE流（法/道溅射不扣防、召唤/毒不扣防）
-    wHP += mon.hp * w;
-    wExp += mon.exp * w;
-    wSingle += single * w;
-    wAoe += aoe * w;
-    // 掉落
     const r = rollDropExpect(entry.name, mon.level);
-    wGold += r.gold * w;
+    // 承伤 & 扛几击（先算，用于判定绝对秒杀）
+    const dmgToPlayerRaw = avgDamage(mon.minAtk, mon.maxAtk, stats.minDef, stats.maxDef);
+    const dmgToPlayer = Math.max(1, Math.floor(dmgToPlayerRaw * (1 - buffDefBonus)));
+    const survive = Math.floor(stats.maxHp / dmgToPlayer);
+    // ★ 绝对秒杀怪（survive ≤ 1，玩家扛不住第二下）完全隔离：
+    // 收益/清场HP/对怪伤害/承伤/药水全部按 0 计入加权，不影响其他能打的怪的收益与清场速度。
+    // 仅保留在 dangerMonsters 做危险提示。
+    const z = survive <= 1 ? 0 : 1;
+    wHP += mon.hp * w * z;
+    wExp += mon.exp * w * z;
+    wSingle += single * w * z;
+    wAoe += aoe * w * z;
+    wGold += r.gold * w * z;
+    wDmgToPlayer += dmgToPlayer * w * z;
+    wHpPotPerKill += r.hpPot * w * z; wMpPotPerKill += r.mpPot * w * z;
+    wHpHealPerKill += r.hpHeal * w * z; wMpHealPerKill += r.mpHeal * w * z;
+    wSurvive += survive * w * z;
+    // 掉落展示：秒杀怪仍可入 allDrops（仅展示来源，不计入收益）
     for (const it of r.items) {
       const k = it.name;
       if (!allDrops[k]) allDrops[k] = { name: k, chance: it.chance, info: it.info, sources: [] };
       if (allDrops[k].sources.length < 3 && !allDrops[k].sources.includes(entry.name))
         allDrops[k].sources.push(entry.name);
     }
-    // 承伤（单怪瞬时，用于扛几击/危险判定）
-    const dmgToPlayerRaw = avgDamage(mon.minAtk, mon.maxAtk, stats.minDef, stats.maxDef);
-    const dmgToPlayer = Math.max(1, Math.floor(dmgToPlayerRaw * (1 - buffDefBonus)));
-    const survive = Math.floor(stats.maxHp / dmgToPlayer);
-    wDmgToPlayer += dmgToPlayer * w;
-    wHpPotPerKill += r.hpPot * w; wMpPotPerKill += r.mpPot * w;
-    wHpHealPerKill += r.hpHeal * w; wMpHealPerKill += r.mpHeal * w;
-    wSurvive += survive * w;
     if (survive < 5) {
       dangerCount += entry.count;
       dangerMonsters.push({ name: entry.name, lv: mon.level, dmg: Math.round(dmgToPlayer), survive, count: entry.count });
@@ -4412,10 +4475,16 @@ function calcMap(map, player, stats, _dps, mpPerTurn, parts) {
   const freeHpPerMin = wHpHealPerKill * killsPerMin;
   const hpCost = Math.max(0, hpTakenPerMin - freeHpPerMin) * (50 / 30);
 
-  const netGold = Math.round(goldPerMin - mpCost - hpCost);
   const safety = Math.max(0, Math.round(100 - (dangerCount / totalWeight) * 100));
-  // 可行性：扛几击 ≥ 主目标击杀回合×1.2，且安全度≥40
-  const practical = wSurvive >= hitsToKill * 1.2 && safety >= 40;
+  // 瞬间秒杀判定：autoHeal 每回合末才喝药，而怪物先反击——若一回合内合击总伤害 ≥ maxHp，
+  // 则吃药来不及、直接阵亡（反复秒杀=无法有效挂机）→ 收益全部归 0。
+  const instakillBarrage = dmgPerTurn >= stats.maxHp;
+  // 可行性：扛几击 ≥ 主目标击杀回合×1.2，且安全度≥40，且不被瞬间秒杀
+  const practical = !instakillBarrage && wSurvive >= hitsToKill * 1.2 && safety >= 40;
+  // 瞬间秒杀：收益全 0（无有效战斗，无药费亏损）
+  const expPerMinFinal = instakillBarrage ? 0 : expPerMin;
+  const goldPerMinFinal = instakillBarrage ? 0 : goldPerMin;
+  const netGold = instakillBarrage ? 0 : Math.round(goldPerMin - mpCost - hpCost);
 
   const dropSummary = Object.values(allDrops)
     .filter(d => {
@@ -4428,13 +4497,14 @@ function calcMap(map, player, stats, _dps, mpPerTurn, parts) {
     .slice(0, 6);
 
   return {
-    map, expPerMin, goldPerMin, netGold, killsPerMin: Math.round(killsPerMin * 10) / 10,
+    map, expPerMin: expPerMinFinal, goldPerMin: goldPerMinFinal, netGold,
+    killsPerMin: Math.round(killsPerMin * 10) / 10,
     hitsToKill: Math.round(hitsToKill * 10) / 10, safety, dangerMonsters,
     mpCostPerMin: Math.round(mpCostPerMin), freeMpPot: Math.round(mpPotPerMin * 10) / 10,
     hpTakenPerMin: Math.round(hpTakenPerMin), hpCost: Math.round(hpCost),
     allDrops: Object.values(allDrops).sort((a, b) => a.chance - b.chance), dropSummary,
     locked: player.level < map.levelReq,
-    practical, wSurvive: Math.round(wSurvive * 10) / 10,
+    practical, lethal: instakillBarrage, wSurvive: Math.round(wSurvive * 10) / 10,
   };
 }
 
@@ -4575,12 +4645,15 @@ function renderTable() {
 }
 
 function renderRow(r, idx) {
-  // 区分两种状态：等级不足(locked) vs 打不动(impractical但能进)
+  // 区分状态：等级不足(locked) / 合击致死(lethal) / 打不动(impractical但能进)
   let rowCls = "";
   let statusTag = "";
   if (r.locked) {
     rowCls = " locked";
     statusTag = ' <span style="color:#ef5350;font-size:11px">🔒等级不足</span>';
+  } else if (r.lethal) {
+    rowCls = " impractical";
+    statusTag = ' <span style="color:#ef5350;font-size:11px" title="单回合承伤'+Math.round((r.hpTakenPerMin/(60*0.95)))+'HP ≥ 满血，吃药来不及直接秒杀">💀瞬间秒杀</span>';
   } else if (!r.practical) {
     rowCls = " impractical";
     statusTag = ' <span style="color:#ff9800;font-size:11px">⚠️打不动</span>';
@@ -4595,13 +4668,24 @@ function renderRow(r, idx) {
       + (r.allDrops.length > 6 ? `<div class="more" onclick="toggleDetail(${idx})">展开全部 ${r.allDrops.length} 项 ▾</div>` : "")
     : '<span style="color:#666">无特殊掉落</span>';
 
+  // 合击致死：经验/金币/净金全显示 0（无有效战斗）
+  const expCell = r.lethal ? '<span style="color:#888">0</span>'
+    : r.practical ? "<b>"+r.expPerMin.toLocaleString()+"</b>"
+    : '<span style="color:#888" title="扛不到杀死怪就死，拿不到经验">'+r.expPerMin.toLocaleString()+'*</span>';
+  const goldCell = r.lethal ? '<span style="color:#888">0</span>'
+    : r.practical ? r.goldPerMin.toLocaleString()
+    : '<span style="color:#888" title="打不死怪，无掉落">~0*</span>';
+  const netCell = r.lethal ? '<span style="color:#888">0</span>'
+    : r.practical ? (r.netGold >= 0 ? "+" : "") + r.netGold.toLocaleString()
+    : "−" + (r.mpCostPerMin/30*50 + r.hpCost).toLocaleString() + "*";
+
   const row = `<tr class="${rowCls}" id="row-${idx}">
     <td class="map-name"><b>${r.map.name}</b>${c2tag}${statusTag}</td>
     <td class="num">${r.map.levelReq}</td>
     <td class="num">${r.killsPerMin}</td>
-    <td class="num">${r.practical ? "<b>"+r.expPerMin.toLocaleString()+"</b>" : '<span style="color:#888" title="扛不到杀死怪就死，拿不到经验">'+r.expPerMin.toLocaleString()+'*</span>'}</td>
-    <td class="num">${r.practical ? r.goldPerMin.toLocaleString() : '<span style="color:#888" title="打不死怪，无掉落">~0*</span>'}</td>
-    <td class="num ${r.practical ? netCls : "neg"}">${r.practical ? (r.netGold >= 0 ? "+" : "") + r.netGold.toLocaleString() : "−" + (r.mpCostPerMin/30*50 + r.hpCost).toLocaleString() + "*"}</td>
+    <td class="num">${expCell}</td>
+    <td class="num">${goldCell}</td>
+    <td class="num ${r.lethal ? "" : (r.practical ? netCls : "neg")}">${netCell}</td>
     <td class="num ${safeCls}">${safeTxt}</td>
     <td class="drops-cell">${dropHtml}</td>
   </tr>`;
@@ -4615,6 +4699,9 @@ function renderDetail(r) {
   const danger = r.dangerMonsters.length
     ? `<div style="margin-bottom:10px;color:#ef9a9a;">⚠️ 危险怪物: ${r.dangerMonsters.map(d => `${d.name}(L${d.lv},打${d.dmg}/击,扛${d.survive})×${d.count}`).join("， ")}</div>`
     : "";
+  const lethalInfo = r.lethal
+    ? `<div style="margin-bottom:10px;color:#ef5350;">💀 瞬间秒杀：单回合承伤约 ${Math.round(r.hpTakenPerMin/(60*0.95))} HP ≥ 满血，autoHeal 来不及喝药就阵亡，无法有效挂机，收益为 0</div>`
+    : "";
   const mpInfo = `<div style="margin-bottom:10px;color:#90caf9;">💧 蓝耗 ${r.mpCostPerMin} MP/分，地图掉落蓝药 ${r.freeMpPot} 瓶/分</div>`;
   const hpInfo = `<div style="margin-bottom:10px;color:#ef9a9a;">❤️ 承受伤害 ${r.hpTakenPerMin} HP/分，红药成本 ${r.hpCost} 金/分</div>`;
   const drops = `<div class="detail-content">${r.allDrops.map(d => {
@@ -4622,7 +4709,7 @@ function renderDetail(r) {
     const typeTag = it.type ? `<span class="prob">[${it.type}${it.job ? "/" + it.job : ""}${it.level ? " L" + it.level : ""}]</span>` : "";
     return `<div class="drop-item"><span class="name">${d.name}</span> ${typeTag}<span class="prob"> 1/${d.chance}</span><br><span class="src">来源: ${d.sources.join("， ")}</span></div>`;
   }).join("")}</div>`;
-  return danger + mpInfo + hpInfo + drops;
+  return danger + lethalInfo + mpInfo + hpInfo + drops;
 }
 
 function setSort(key) {
@@ -4711,6 +4798,7 @@ function switchDbSection(section, btn) {
   el.style.display = "block";
   if (section === "items") renderItems();
   else if (section === "monsters") renderMonsters();
+  else if (section === "regions") renderRegions();
   else if (section === "skills") renderSkills();
   else if (section === "tower") renderTower();
 }
@@ -4911,6 +4999,133 @@ function renderMonDetail(name, m, maps) {
 
 function toggleMon(name) { dbExpandedMon = dbExpandedMon === name ? null : name; renderMonsters(); }
 
+// === 地区图鉴 ===
+// 通用掉落分档标签（与 getDropTable 一致：level<=20 low, 21-40 mid, >40 high）
+const GENERIC_TIER_INFO = {
+  low:  { label: "低档 (怪物等级 ≤ 20)", color: "#a5d6a7" },
+  mid:  { label: "中档 (怪物等级 21-40)", color: "#ffd54f" },
+  high: { label: "高档 (怪物等级 > 40)",  color: "#ef9a9a" },
+};
+const MON_TYPE_TEXT = { normal: "普通", elite: "精英", boss: "Boss" };
+
+// 渲染顶部通用掉落（low/mid/high 各一次，避免每怪重复）
+function renderGenericDrops() {
+  const tiers = ["low", "mid", "high"];
+  const html = `<div class="region-generic-panel">
+    <div class="region-generic-title">📜 通用掉落表（无专属掉落的怪物按等级套用下表，不必每怪重复列出）</div>
+    ${tiers.map(tier => {
+      const table = GENERIC_DROPS[tier] || [];
+      const info = GENERIC_TIER_INFO[tier];
+      const items = table.filter(d => d.item !== "金币").map(d => {
+        const it = ITEMS[d.item];
+        const typeTag = it ? `<span class="type-tag ${it.type}">${TYPE_NAMES[it.type]||it.type}</span>` : "";
+        const cntTag = d.count ? ` ×${d.count}` : "";
+        return `<span class="region-gen-item">${typeTag}<b>${d.item}</b><span class="prob">1/${d.chance}</span>${cntTag}</span>`;
+      }).join("");
+      return `<div class="region-gen-tier">
+        <div class="region-gen-tier-label" style="color:${info.color}">${info.label}</div>
+        <div class="region-gen-items">${items}</div>
+      </div>`;
+    }).join("")}
+  </div>`;
+  document.getElementById("region-generic-drops").innerHTML = html;
+}
+
+// 解析专属掉落表：DROPS[name] 可能是数组，也可能是字符串别名（指向另一个怪），跟随引用并防循环
+function resolveDropTable(name) {
+  let cur = name;
+  const seen = new Set();
+  while (Object.prototype.hasOwnProperty.call(DROPS, cur)) {
+    if (seen.has(cur)) return null; // 循环引用保护
+    seen.add(cur);
+    const t = DROPS[cur];
+    if (Array.isArray(t)) return t;
+    if (typeof t === "string") { cur = t; continue; }
+    return null; // 其他异常类型
+  }
+  return null;
+}
+
+// 单个掉落条目渲染（复用于专属掉落）
+function renderDropEntry(d) {
+  const it = ITEMS[d.item];
+  const typeTag = it ? `<span class="type-tag ${it.type}">${TYPE_NAMES[it.type]||it.type}</span>` : "";
+  const cntTag = d.count ? ` ×${d.count}` : "";
+  return `<span class="region-drop-item">${typeTag}<b>${d.item}</b><span class="prob">1/${d.chance}</span>${cntTag}</span>`;
+}
+
+// 渲染单张地图卡片（全部展开，不折叠）
+function renderRegionCard(map) {
+  const continent = map.continent || 1;
+  const c2tag = continent === 2 ? ' <span class="c2">[二大陆]</span>' : "";
+  const totalWeight = map.monsters.reduce((s, m) => s + m.count, 0);
+
+  const monsHtml = map.monsters.map(entry => {
+    const mon = MONSTERS[entry.name];
+    if (!mon) return ""; // 悬挂引用跳过
+    const pct = entry.count / totalWeight * 100;
+    const pctStr = pct >= 10 ? pct.toFixed(0) : pct.toFixed(1);
+    const typeText = MON_TYPE_TEXT[mon.type] || mon.type;
+    const typeCls = `mtype-${mon.type}`;
+    // 专属掉落：只用 DROPS[name]（解析字符串别名），不混入通用表
+    const specialTable = resolveDropTable(entry.name);
+    let dropsHtml;
+    if (specialTable) {
+      const drops = specialTable.filter(d => d.item !== "金币");
+      dropsHtml = drops.length
+        ? `<div class="region-drops">${drops.map(renderDropEntry).join("")}</div>`
+        : '<div class="region-drops-empty">无掉落</div>';
+    } else {
+      const tier = mon.level <= 20 ? "low" : (mon.level <= 40 ? "mid" : "high");
+      dropsHtml = `<div class="region-drops-generic">通用${GENERIC_TIER_INFO[tier].label.split(" ")[0]} ↑</div>`;
+    }
+    return `<div class="region-mon">
+      <div class="region-mon-head">
+        <span class="${typeCls}"><b>${entry.name}</b></span>
+        <span class="region-mon-meta">Lv${mon.level} ${typeText} HP${mon.hp} <span class="region-pct">${pctStr}%</span></span>
+      </div>
+      ${dropsHtml}
+    </div>`;
+  }).join("");
+
+  return `<div class="region-card">
+    <div class="region-card-header">
+      <b>${map.name}</b>${c2tag}
+      <span class="region-card-lv">要求 Lv${map.levelReq}</span>
+    </div>
+    <div class="region-mons">${monsHtml}</div>
+  </div>`;
+}
+
+function renderRegions() {
+  const cont = document.getElementById("region-filter-cont").value;
+  const kw = document.getElementById("region-filter-kw").value.trim().toLowerCase();
+
+  // 通用掉落全局展示
+  renderGenericDrops();
+
+  // 过滤地图：大陆 + 关键词（匹配地图名或其怪物名）
+  let list = MAPS.filter(m => {
+    const mc = m.continent || 1;
+    if (cont && mc != cont) return false;
+    if (kw) {
+      const inName = m.name.toLowerCase().includes(kw);
+      const inMon = m.monsters.some(e => e.name.toLowerCase().includes(kw));
+      if (!inName && !inMon) return false;
+    }
+    return true;
+  });
+  // 排序：一大陆在前，再按等级要求升序
+  list.sort((a, b) => {
+    const ca = a.continent || 1, cb = b.continent || 1;
+    if (ca !== cb) return ca - cb;
+    return a.levelReq - b.levelReq;
+  });
+
+  document.getElementById("region-count").textContent = `${list.length} 张地图`;
+  document.getElementById("regions-body").innerHTML = list.map(renderRegionCard).join("");
+}
+
 // === 技能库 ===
 let dbExpandedSkill = null;
 function renderSkills() {
@@ -4935,6 +5150,26 @@ function renderSkills() {
       <td class="num">${s.delay?`${s.delay}回合`:"无"}</td><td>${s.aoe?"AOE":""}</td>
       <td style="font-size:11px;color:#b0bec5;max-width:240px">${(s.desc||"").slice(0,40)}</td>
     </tr>`;
+    // 掉落位置：技能名 == 技能书物品名，直接查反向索引
+    const idx = buildReverseIndex();
+    const sources = (idx && idx.itemToSources && idx.itemToSources[name]) || [];
+    const monTypeText = { normal: "普通", elite: "精英", boss: "Boss" };
+    let dropLocHtml = '<div style="color:#666">无掉落数据（可能为初始技能或任务获得）</div>';
+    if (sources.length) {
+      dropLocHtml = sources.map(sr => {
+        if (sr.generic) {
+          return `<div class="drop-source generic"><span class="mon">📜 ${sr.monName}</span> <span class="prob">概率 1/${sr.chance}</span></div>`;
+        }
+        const tt = sr.monType ? monTypeText[sr.monType] || sr.monType : "";
+        const monTypeTag = tt ? `<span class="mtype-${sr.monType}">[${tt}]</span> ` : "";
+        const mapsTag = sr.maps.length
+          ? `<div class="maps">📍 ${sr.maps.map(m => `${m.name}(L${m.levelReq}${m.continent===2?",二大陆":""})`).join("， ")}</div>`
+          : '<div class="maps" style="color:#666">📍 无地图记录</div>';
+        const lvTag = sr.monLevel ? ` <span style="color:#888">Lv${sr.monLevel}</span>` : "";
+        const cntTag = sr.count ? ` ×${sr.count}` : "";
+        return `<div class="drop-source"><span class="mon">${monTypeTag}${sr.monName}</span>${lvTag} <span class="prob">概率 1/${sr.chance}</span>${cntTag}${mapsTag}</div>`;
+      }).join("");
+    }
     const detail = isExpanded ? `<tr class="db-detail-row"><td colspan="8"><div class="db-detail-content">
       <div class="stat-grid">
         <div class="stat-item"><span class="lbl">威力power</span> <span class="val">${s.power}</span></div>
@@ -4943,6 +5178,7 @@ function renderSkills() {
         <div class="stat-item"><span class="lbl">冷却</span> <span class="val">${s.delay?`${s.delay}回合`:"无冷却"}</span></div>
       </div>
       <div style="color:#b0bec5;font-size:12px;margin-top:6px">${s.desc||""}</div>
+      <div class="db-detail-section"><h4>📍 技能书掉落位置（${sources.length}条，按概率从高到低）</h4>${dropLocHtml}</div>
     </div></td></tr>` : "";
     return row + detail;
   }).join("");

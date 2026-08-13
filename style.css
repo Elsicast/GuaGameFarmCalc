@@ -180,3 +180,46 @@ tr.impractical td.map-name b { color: #ff9800; }
 .stat-grid .stat-item { background: #16213e; padding: 4px 8px; border-radius: 3px; font-size: 11px; }
 .stat-grid .stat-item .lbl { color: #888; }
 .stat-grid .stat-item .val { color: #fff; }
+
+/* === 地区图鉴 === */
+.region-generic-panel {
+  background: #0f1726; border: 1px solid #1e2a47; border-radius: 6px;
+  padding: 10px 12px; margin-bottom: 14px;
+}
+.region-generic-title { color: #4fc3f7; font-size: 13px; margin-bottom: 8px; font-weight: bold; }
+.region-gen-tier { margin-bottom: 8px; }
+.region-gen-tier:last-child { margin-bottom: 0; }
+.region-gen-tier-label { font-size: 12px; font-weight: bold; margin-bottom: 4px; }
+.region-gen-items { display: flex; flex-wrap: wrap; gap: 5px; }
+.region-gen-item {
+  background: #16213e; padding: 2px 6px; border-radius: 3px; font-size: 11px;
+  display: inline-flex; align-items: center; gap: 3px; color: #fff;
+}
+.region-gen-item .prob { color: #888; font-size: 10px; }
+
+.region-card {
+  background: #0f1726; border: 1px solid #1e2a47; border-radius: 6px;
+  padding: 0; overflow: hidden;
+}
+.region-card-header {
+  background: #1a237e; padding: 6px 10px; font-size: 13px; color: #fff;
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+}
+.region-card-lv { margin-left: auto; font-size: 11px; color: #90caf9; }
+.region-mons { padding: 6px; display: grid; gap: 6px; }
+.region-mon {
+  background: #16213e; border-radius: 4px; padding: 5px 8px;
+  border-left: 3px solid #37474f;
+}
+.region-mon-head { font-size: 12px; display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
+.region-mon-meta { color: #888; font-size: 11px; }
+.region-pct { color: #ffd700; font-weight: bold; }
+.region-drops { margin-top: 4px; display: flex; flex-wrap: wrap; gap: 4px; }
+.region-drop-item {
+  background: #0d1b2a; padding: 1px 5px; border-radius: 3px; font-size: 11px;
+  display: inline-flex; align-items: center; gap: 3px; color: #fff;
+}
+.region-drop-item .prob { color: #888; font-size: 10px; }
+.region-drops-empty { color: #666; font-size: 11px; margin-top: 3px; }
+.region-drops-generic { color: #90caf9; font-size: 11px; margin-top: 3px; font-style: italic; }
+
