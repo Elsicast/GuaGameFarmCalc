@@ -243,6 +243,7 @@ tr.impractical td.map-name b { color: #ff9800; }
       <button class="db-nav-item active" onclick="switchDbSection('items', this)">⚔️ 装备物品</button>
       <button class="db-nav-item" onclick="switchDbSection('monsters', this)">👹 怪物图鉴</button>
       <button class="db-nav-item" onclick="switchDbSection('skills', this)">✨ 技能库</button>
+      <button class="db-nav-item" onclick="switchDbSection('tower', this)">🗼 通天塔</button>
     </div>
     <div class="db-content">
       <!-- 装备物品 -->
@@ -339,6 +340,30 @@ tr.impractical td.map-name b { color: #ff9800; }
               <th>技能名</th><th>职业</th><th>类型</th><th>等级</th><th>加成</th><th>冷却</th><th>AOE</th><th>描述</th>
             </tr></thead>
             <tbody id="skills-body"></tbody>
+          </table>
+        </div>
+      </div>
+      <!-- 通天塔 -->
+      <div id="db-section-tower" class="db-section" style="display:none;">
+        <div class="filter-bar">
+          <label>层</label>
+          <input type="number" id="tower-filter-min" placeholder="min" style="width:50px" onchange="renderTower()" min="1" max="30">
+          ~<input type="number" id="tower-filter-max" placeholder="max" style="width:50px" onchange="renderTower()" min="1" max="30">
+          <label>类型</label>
+          <select id="tower-filter-type" onchange="renderTower()">
+            <option value="">全部</option>
+            <option value="boss">含Boss</option>
+            <option value="elite">含精英</option>
+          </select>
+          <input type="text" id="tower-filter-kw" placeholder="🔍 搜索怪物名..." oninput="renderTower()">
+          <span class="filter-count" id="tower-count"></span>
+        </div>
+        <div style="overflow-x:auto; max-height: 70vh;">
+          <table class="db-table" id="tower-table">
+            <thead><tr>
+              <th>层</th><th>门票</th><th>怪物构成</th><th>总HP</th><th>最高等级</th><th>类型</th><th>掉落预览</th>
+            </tr></thead>
+            <tbody id="tower-body"></tbody>
           </table>
         </div>
       </div>
@@ -3913,6 +3938,145 @@ const GENERIC_DROPS = {
 
 </script>
 
+<script>
+/* === tower.js === */
+// 通天塔副本数据 - 基于 mirror-master/documents/通天塔.xlsx
+// 每层3个怪物依次击杀，每天每层只能挑战一次
+// monsters中: ref引用MONSTERS已有怪物, 自定义怪物直接写属性
+const TOWER_FLOORS = [
+  { floor: 1, cost: 200, monsters: [
+    { ref: '半兽战士' }, { ref: '半兽战士' }, { ref: '半兽勇士' },
+  ]},
+  { floor: 2, cost: 500, monsters: [
+    { ref: '红蛇' }, { ref: '虎蛇' }, { ref: '巨型多角虫' },
+  ]},
+  { floor: 3, cost: 800, monsters: [
+    { ref: '骷髅战将' }, { ref: '骷髅战将' }, { ref: '骷髅精灵' },
+  ]},
+  { floor: 4, cost: 1200, monsters: [
+    { name: '电僵尸', hp: 200, minAtk: 10, maxAtk: 20, minDef: 2, minMagDef: 2, exp: 300, level: 25, type: 'normal', skills: [{name:'雷电',type:'magic',chance:0.25,power:0.8}] },
+    { name: '电僵尸', hp: 200, minAtk: 10, maxAtk: 20, minDef: 2, minMagDef: 2, exp: 300, level: 25, type: 'normal', skills: [{name:'雷电',type:'magic',chance:0.25,power:0.8}] },
+    { ref: '尸王' },
+  ]},
+  { floor: 5, cost: 2000, monsters: [
+    { ref: '沃玛卫士' }, { ref: '沃玛卫士' }, { ref: '沃玛教主' },
+  ]},
+  { floor: 6, cost: 3000, monsters: [
+    { ref: '钳虫' }, { ref: '钳虫' }, { ref: '邪恶钳虫' },
+  ]},
+  { floor: 7, cost: 4000, monsters: [
+    { ref: '黑野猪' }, { ref: '红野猪' }, { ref: '白野猪' },
+  ]},
+  { floor: 8, cost: 5000, monsters: [
+    { ref: '祖玛雕像' }, { ref: '祖玛卫士' }, { ref: '祖玛教主' },
+  ]},
+  { floor: 9, cost: 7000, monsters: [
+    { name: '双头金钢', hp: 3000, minAtk: 30, maxAtk: 60, minDef: 15, minMagDef: 15, exp: 5000, level: 55, type: 'elite' },
+    { name: '双头血魔', hp: 3500, minAtk: 35, maxAtk: 65, minDef: 18, minMagDef: 18, exp: 5500, level: 55, type: 'elite', skills: [{name:'吸血',type:'lifesteal',chance:0.25,power:0.5}] },
+    { ref: '赤月恶魔' },
+  ]},
+  { floor: 10, cost: 10000, monsters: [
+    { ref: '虹魔教主' }, { ref: '虹魔猪卫' }, { ref: '虹魔猪卫' },
+  ]},
+  { floor: 11, cost: 12000, monsters: [
+    { ref: '黄泉教主' },
+    { name: '恶灵教主', hp: 8000, minAtk: 40, maxAtk: 75, minDef: 25, minMagDef: 25, exp: 9000, level: 60, type: 'boss', skills: [{name:'恶灵诅咒',type:'magic',chance:0.3,power:1.4},{name:'召唤恶灵',type:'summon',chance:0.2,power:0.6}] },
+    { ref: '牛魔王' },
+  ]},
+  { floor: 12, cost: 15000, monsters: [
+    { ref: '魔龙战将' }, { ref: '魔龙战将' }, { ref: '魔龙教主' },
+  ]},
+  { floor: 13, cost: 18000, monsters: [
+    { name: '金仗蜘蛛', hp: 2000, minAtk: 45, maxAtk: 70, minDef: 20, minMagDef: 20, exp: 6000, level: 58, type: 'normal' },
+    { name: '绿魔蜘蛛', hp: 2200, minAtk: 48, maxAtk: 75, minDef: 22, minMagDef: 22, exp: 6500, level: 58, type: 'normal', skills: [{name:'毒丝',type:'poison',chance:0.3,power:0.6}] },
+    { name: '雷炎蛛王', hp: 20000, minAtk: 55, maxAtk: 100, minDef: 35, minMagDef: 35, exp: 25000, level: 60, type: 'boss', skills: [{name:'雷炎',type:'magic',chance:0.35,power:1.5},{name:'蛛网',type:'paralysis',chance:0.12,power:0}] },
+  ]},
+  { floor: 14, cost: 20000, monsters: [
+    { name: '圣殿黄龙', hp: 2500, minAtk: 50, maxAtk: 80, minDef: 25, minMagDef: 25, exp: 7000, level: 58, type: 'elite' },
+    { name: '圣殿黄龙', hp: 2500, minAtk: 50, maxAtk: 80, minDef: 25, minMagDef: 25, exp: 7000, level: 58, type: 'elite' },
+    { name: '骷髅统领', hp: 22000, minAtk: 55, maxAtk: 105, minDef: 35, minMagDef: 35, exp: 28000, level: 60, type: 'boss', skills: [{name:'统领一击',type:'magic',chance:0.3,power:1.5},{name:'召唤骷髅',type:'summon',chance:0.2,power:0.7}] },
+  ]},
+  { floor: 15, cost: 22000, monsters: [
+    { name: '狐月弓箭手', hp: 2000, minAtk: 45, maxAtk: 75, minDef: 20, minMagDef: 20, exp: 6000, level: 55, type: 'normal' },
+    { name: '狐月弓箭手', hp: 2000, minAtk: 45, maxAtk: 75, minDef: 20, minMagDef: 20, exp: 6000, level: 55, type: 'normal' },
+    { ref: '狐月天珠' },
+  ]},
+  { floor: 16, cost: 25000, monsters: [
+    { name: '雪域天将', hp: 3000, minAtk: 55, maxAtk: 90, minDef: 28, minMagDef: 28, exp: 8000, level: 60, type: 'elite' },
+    { name: '雪域天将', hp: 3000, minAtk: 55, maxAtk: 90, minDef: 28, minMagDef: 28, exp: 8000, level: 60, type: 'elite' },
+    { name: '雪域魔王', hp: 28000, minAtk: 65, maxAtk: 120, minDef: 40, minMagDef: 40, exp: 35000, level: 60, type: 'boss', skills: [{name:'冰封万里',type:'freeze',chance:0.15,power:0},{name:'雪暴',type:'magic',chance:0.35,power:1.6}] },
+  ]},
+  { floor: 17, cost: 28000, monsters: [
+    { name: '火龙将军', hp: 3500, minAtk: 58, maxAtk: 95, minDef: 30, minMagDef: 30, exp: 9000, level: 60, type: 'elite' },
+    { name: '火龙将军', hp: 3500, minAtk: 58, maxAtk: 95, minDef: 30, minMagDef: 30, exp: 9000, level: 60, type: 'elite' },
+    { ref: '火龙教主' },
+  ]},
+  { floor: 18, cost: 30000, monsters: [
+    { name: '静之火灵', hp: 2500, minAtk: 50, maxAtk: 85, minDef: 25, minMagDef: 25, exp: 7000, level: 60, type: 'elite' },
+    { name: '怒之火灵', hp: 2800, minAtk: 55, maxAtk: 90, minDef: 28, minMagDef: 28, exp: 7500, level: 60, type: 'elite', skills: [{name:'怒火',type:'magic',chance:0.3,power:1.3}] },
+    { name: '火龙', hp: 25000, minAtk: 60, maxAtk: 110, minDef: 38, minMagDef: 38, exp: 30000, level: 60, type: 'boss', skills: [{name:'龙息',type:'magic',chance:0.35,power:1.6},{name:'灼烧',type:'poison',chance:0.2,power:0.6}] },
+  ]},
+  { floor: 19, cost: 32000, monsters: [
+    { name: '黑暗女妖', hp: 3000, minAtk: 55, maxAtk: 90, minDef: 28, minMagDef: 28, exp: 8000, level: 60, type: 'elite', skills: [{name:'妖术',type:'magic',chance:0.3,power:1.3}] },
+    { name: '黑暗女妖', hp: 3000, minAtk: 55, maxAtk: 90, minDef: 28, minMagDef: 28, exp: 8000, level: 60, type: 'elite', skills: [{name:'妖术',type:'magic',chance:0.3,power:1.3}] },
+  ]},
+  { floor: 20, cost: 35000, monsters: [
+    { name: '嗜魂者', hp: 3500, minAtk: 60, maxAtk: 95, minDef: 30, minMagDef: 30, exp: 9000, level: 60, type: 'elite', skills: [{name:'嗜魂',type:'lifesteal',chance:0.25,power:0.5}] },
+    { name: '嗜血者', hp: 3500, minAtk: 60, maxAtk: 100, minDef: 30, minMagDef: 30, exp: 9500, level: 60, type: 'elite', skills: [{name:'嗜血',type:'lifesteal',chance:0.3,power:0.5}] },
+  ]},
+  { floor: 21, cost: 38000, monsters: [
+    { name: '泯灭战士', hp: 3500, minAtk: 60, maxAtk: 100, minDef: 30, minMagDef: 30, exp: 9000, level: 60, type: 'elite' },
+    { name: '泯灭斗士', hp: 3800, minAtk: 62, maxAtk: 105, minDef: 32, minMagDef: 32, exp: 9500, level: 60, type: 'elite' },
+    { name: '泯灭脑魔', hp: 30000, minAtk: 65, maxAtk: 125, minDef: 40, minMagDef: 40, exp: 38000, level: 60, type: 'boss', skills: [{name:'精神崩溃',type:'magic',chance:0.35,power:1.6},{name:'恐惧',type:'paralysis',chance:0.12,power:0}] },
+  ]},
+  { floor: 22, cost: 40000, monsters: [
+    { name: '地之护法', hp: 4000, minAtk: 65, maxAtk: 105, minDef: 33, minMagDef: 33, exp: 10000, level: 60, type: 'elite' },
+    { name: '地之护法', hp: 4000, minAtk: 65, maxAtk: 105, minDef: 33, minMagDef: 33, exp: 10000, level: 60, type: 'elite' },
+    { name: '不屈英灵', hp: 32000, minAtk: 70, maxAtk: 130, minDef: 42, minMagDef: 42, exp: 40000, level: 60, type: 'boss', skills: [{name:'英灵之怒',type:'magic',chance:0.35,power:1.7},{name:'震地',type:'paralysis',chance:0.12,power:0}] },
+  ]},
+  { floor: 23, cost: 42000, monsters: [
+    { name: '幽灵捍卫者', hp: 4000, minAtk: 65, maxAtk: 110, minDef: 33, minMagDef: 33, exp: 10000, level: 60, type: 'elite' },
+    { name: '幽灵捍卫者', hp: 4000, minAtk: 65, maxAtk: 110, minDef: 33, minMagDef: 33, exp: 10000, level: 60, type: 'elite' },
+    { name: '幽灵教主', hp: 35000, minAtk: 70, maxAtk: 135, minDef: 42, minMagDef: 42, exp: 42000, level: 60, type: 'boss', skills: [{name:'幽灵诅咒',type:'magic',chance:0.35,power:1.7},{name:'召唤幽灵',type:'summon',chance:0.2,power:0.7}] },
+  ]},
+  { floor: 24, cost: 45000, monsters: [
+    { name: '破碎斗魂', hp: 4500, minAtk: 70, maxAtk: 115, minDef: 35, minMagDef: 35, exp: 11000, level: 60, type: 'elite' },
+    { name: '破碎幽魂', hp: 4500, minAtk: 70, maxAtk: 115, minDef: 35, minMagDef: 35, exp: 11000, level: 60, type: 'elite', skills: [{name:'幽魂缠绕',type:'poison',chance:0.3,power:0.6}] },
+    { name: '太阴玉兔', hp: 35000, minAtk: 72, maxAtk: 135, minDef: 43, minMagDef: 43, exp: 45000, level: 60, type: 'boss', skills: [{name:'月华',type:'magic',chance:0.35,power:1.7},{name:'冰冻',type:'freeze',chance:0.12,power:0}] },
+  ]},
+  { floor: 25, cost: 48000, monsters: [
+    { name: '狂暴', hp: 5000, minAtk: 75, maxAtk: 120, minDef: 35, minMagDef: 35, exp: 12000, level: 60, type: 'elite', skills: [{name:'狂暴一击',type:'magic',chance:0.3,power:1.4}] },
+    { name: '嗜血', hp: 5000, minAtk: 75, maxAtk: 120, minDef: 35, minMagDef: 35, exp: 12000, level: 60, type: 'elite', skills: [{name:'嗜血',type:'lifesteal',chance:0.3,power:0.5}] },
+  ]},
+  { floor: 26, cost: 50000, monsters: [
+    { name: '月灵之神', hp: 5000, minAtk: 78, maxAtk: 125, minDef: 38, minMagDef: 38, exp: 13000, level: 60, type: 'elite', skills: [{name:'月灵术',type:'magic',chance:0.3,power:1.5}] },
+    { name: '迷惑之神', hp: 5000, minAtk: 78, maxAtk: 125, minDef: 38, minMagDef: 38, exp: 13000, level: 60, type: 'elite', skills: [{name:'迷惑',type:'paralysis',chance:0.15,power:0}] },
+    { name: '洪荒之神', hp: 40000, minAtk: 80, maxAtk: 145, minDef: 45, minMagDef: 45, exp: 50000, level: 60, type: 'boss', skills: [{name:'洪荒之力',type:'magic',chance:0.4,power:1.8},{name:'震地',type:'paralysis',chance:0.12,power:0}] },
+  ]},
+  { floor: 27, cost: 55000, monsters: [
+    { name: '封印之神', hp: 5500, minAtk: 80, maxAtk: 130, minDef: 40, minMagDef: 40, exp: 14000, level: 60, type: 'elite' },
+    { name: '封印之神', hp: 5500, minAtk: 80, maxAtk: 130, minDef: 40, minMagDef: 40, exp: 14000, level: 60, type: 'elite' },
+    { name: '失落魔王', hp: 42000, minAtk: 82, maxAtk: 150, minDef: 46, minMagDef: 46, exp: 55000, level: 60, type: 'boss', skills: [{name:'魔王之怒',type:'magic',chance:0.4,power:1.8},{name:'召唤魔物',type:'summon',chance:0.2,power:0.8}] },
+  ]},
+  { floor: 28, cost: 60000, monsters: [
+    { name: '藏月妖魅', hp: 5500, minAtk: 82, maxAtk: 135, minDef: 40, minMagDef: 40, exp: 14000, level: 60, type: 'elite', skills: [{name:'妖魅术',type:'magic',chance:0.3,power:1.5}] },
+    { name: '藏月妖魅', hp: 5500, minAtk: 82, maxAtk: 135, minDef: 40, minMagDef: 40, exp: 14000, level: 60, type: 'elite', skills: [{name:'妖魅术',type:'magic',chance:0.3,power:1.5}] },
+    { name: '邀月', hp: 45000, minAtk: 85, maxAtk: 155, minDef: 48, minMagDef: 48, exp: 58000, level: 60, type: 'boss', skills: [{name:'邀月斩',type:'magic',chance:0.4,power:1.9},{name:'月华冰冻',type:'freeze',chance:0.15,power:0}] },
+  ]},
+  { floor: 29, cost: 65000, monsters: [
+    { name: '邪魔', hp: 6000, minAtk: 85, maxAtk: 140, minDef: 42, minMagDef: 42, exp: 15000, level: 60, type: 'elite', skills: [{name:'邪术',type:'magic',chance:0.3,power:1.5}] },
+    { name: '邪魔', hp: 6000, minAtk: 85, maxAtk: 140, minDef: 42, minMagDef: 42, exp: 15000, level: 60, type: 'elite', skills: [{name:'邪术',type:'magic',chance:0.3,power:1.5}] },
+    { name: '深渊', hp: 48000, minAtk: 88, maxAtk: 160, minDef: 50, minMagDef: 50, exp: 60000, level: 60, type: 'boss', skills: [{name:'深渊吞噬',type:'magic',chance:0.4,power:1.9},{name:'恐惧',type:'paralysis',chance:0.15,power:0},{name:'召唤深渊',type:'summon',chance:0.15,power:0.8}] },
+  ]},
+  { floor: 30, cost: 70000, monsters: [
+    { name: '祭血亡灵', hp: 6500, minAtk: 88, maxAtk: 145, minDef: 45, minMagDef: 45, exp: 16000, level: 60, type: 'elite', skills: [{name:'亡灵诅咒',type:'poison',chance:0.3,power:0.7}] },
+    { name: '祭血亡灵', hp: 6500, minAtk: 88, maxAtk: 145, minDef: 45, minMagDef: 45, exp: 16000, level: 60, type: 'elite', skills: [{name:'亡灵诅咒',type:'poison',chance:0.3,power:0.7}] },
+    { name: '祭血心魔', hp: 50000, minAtk: 90, maxAtk: 170, minDef: 50, minMagDef: 50, exp: 65000, level: 60, type: 'boss', skills: [{name:'心魔噬魂',type:'magic',chance:0.4,power:2.0},{name:'恐惧',type:'paralysis',chance:0.15,power:0},{name:'吸血',type:'lifesteal',chance:0.25,power:0.6}] },
+  ]},
+];
+
+</script>
+
 <!-- === 应用逻辑 === -->
 <script>
 "use strict";
@@ -4525,6 +4689,7 @@ function switchDbSection(section, btn) {
   if (section === "items") renderItems();
   else if (section === "monsters") renderMonsters();
   else if (section === "skills") renderSkills();
+  else if (section === "tower") renderTower();
 }
 
 // === 初始化下拉选项 ===
@@ -4759,6 +4924,120 @@ function renderSkills() {
     return row + detail;
   }).join("");
 }
+
+// === 通天塔 ===
+let dbExpandedTower = null;
+const TOWER_MON_RANK = { normal: 1, elite: 2, boss: 3 };
+
+// 解析 tower.js 怪物定义为统一结构（复刻 game.js spawnTowerMonster）
+// def.ref → 引用 MONSTERS 已有怪物；否则用内联属性（通天塔专属怪）
+function resolveTowerMon(def) {
+  if (def.ref) {
+    const t = MONSTERS[def.ref];
+    if (!t) return { name: def.ref, hp: 0, minAtk: 0, maxAtk: 0, minDef: 0, minMagDef: 0, exp: 0, level: 0, type: 'normal', source: 'ref' };
+    return Object.assign({ name: def.ref, source: 'ref' }, t);
+  }
+  return {
+    name: def.name, hp: def.hp, minAtk: def.minAtk, maxAtk: def.maxAtk,
+    minDef: def.minDef || 0, minMagDef: def.minMagDef || 0,
+    exp: def.exp, level: def.level, type: def.type, skills: def.skills,
+    source: 'custom'
+  };
+}
+
+function renderTower() {
+  const fmin = parseInt(document.getElementById("tower-filter-min").value) || 1;
+  const fmax = parseInt(document.getElementById("tower-filter-max").value) || 30;
+  const ftype = document.getElementById("tower-filter-type").value;
+  const kw = document.getElementById("tower-filter-kw").value.trim().toLowerCase();
+
+  let list = TOWER_FLOORS.filter(f => {
+    if (f.floor < fmin || f.floor > fmax) return false;
+    const mons = f.monsters.map(resolveTowerMon);
+    if (ftype === "boss" && !mons.some(m => m.type === "boss")) return false;
+    if (ftype === "elite" && !mons.some(m => m.type === "boss" || m.type === "elite")) return false;
+    if (kw && !mons.some(m => m.name.toLowerCase().includes(kw))) return false;
+    return true;
+  });
+  document.getElementById("tower-count").textContent = `${list.length} 层`;
+  document.getElementById("tower-body").innerHTML = list.map(renderTowerRow).join("");
+}
+
+function renderTowerRow(f) {
+  const mons = f.monsters.map(resolveTowerMon);
+  const isExpanded = dbExpandedTower === f.floor;
+  const monTags = mons.map(m => `<span class="mtype-${m.type || 'normal'}" style="margin-right:6px">${m.name}</span>`).join("");
+  const totalHp = mons.reduce((s, m) => s + (m.hp || 0), 0);
+  const maxLv = mons.length ? Math.max.apply(null, mons.map(m => m.level || 0)) : 0;
+  const topType = mons.reduce((a, m) => (TOWER_MON_RANK[m.type] > TOWER_MON_RANK[a] ? m.type : a), "normal");
+  const topText = { normal: "普通", elite: "精英", boss: "Boss" }[topType] || topType;
+  // 掉落预览：合并该层所有怪的专属掉落物品名（去重）
+  const dropItems = [];
+  mons.forEach(m => {
+    const d = DROPS[m.name];
+    if (d) d.forEach(x => { if (x.item !== "金币" && !dropItems.includes(x.item)) dropItems.push(x.item); });
+  });
+  const dropPreview = dropItems.slice(0, 4).map(it => `<span style="font-size:11px;color:#90caf9;margin-right:4px">${it}</span>`).join("")
+    + (dropItems.length > 4 ? `<span style="font-size:11px;color:#666">等${dropItems.length}</span>` : "")
+    || '<span style="font-size:11px;color:#666">通用掉落</span>';
+
+  const row = `<tr onclick="toggleTower(${f.floor})">
+    <td><b>第${f.floor}层</b></td>
+    <td class="num">${f.cost.toLocaleString()}</td>
+    <td>${monTags}</td>
+    <td class="num">${totalHp.toLocaleString()}</td>
+    <td class="num">${maxLv}</td>
+    <td class="mtype-${topType}">${topText}</td>
+    <td>${dropPreview}</td>
+  </tr>`;
+  const detail = isExpanded ? `<tr class="db-detail-row"><td colspan="7">${renderTowerDetail(f, mons)}</td></tr>` : "";
+  return row + detail;
+}
+
+function renderTowerDetail(f, mons) {
+  const cards = mons.map(m => {
+    const typeText = { normal: "普通", elite: "精英", boss: "Boss" }[m.type] || m.type || "普通";
+    const srcTag = m.source === "ref"
+      ? '<span style="font-size:11px;color:#66bb6a">引用已有</span>'
+      : '<span style="font-size:11px;color:#ce93d8">通天塔专属</span>';
+    const skillsHtml = (m.skills && m.skills.length)
+      ? m.skills.map(s => `<div class="stat-item"><span class="lbl">${s.name}[${s.type}]</span> <span class="val">${(s.chance*100).toFixed(0)}%${s.power ? ` ×${s.power}` : ""}</span></div>`).join("")
+      : '<div style="color:#666">无技能</div>';
+    let drops = DROPS[m.name];
+    if (!drops) {
+      const tier = (m.level || 0) <= 20 ? "low" : ((m.level || 0) <= 40 ? "mid" : "high");
+      drops = GENERIC_DROPS[tier];
+    }
+    const dropsHtml = (Array.isArray(drops) ? drops : []).filter(d => d.item !== "金币").slice(0, 16).map(d => {
+      const it = ITEMS[d.item];
+      const tag = it ? `<span class="type-tag ${it.type}">${TYPE_NAMES[it.type] || it.type}</span>` : "";
+      return `<div class="stat-item">${tag} <span class="val">${d.item}</span> <span class="lbl">1/${d.chance}</span></div>`;
+    }).join("") || '<div style="color:#666">无掉落</div>';
+
+    return `<div class="db-detail-section">
+      <h4><span class="mtype-${m.type || 'normal'}">${m.name}</span> <span style="font-size:12px;color:#888">${typeText}</span> ${srcTag}</h4>
+      <div class="stat-grid">
+        <div class="stat-item"><span class="lbl">等级</span> <span class="val">${m.level || 0}</span></div>
+        <div class="stat-item"><span class="lbl">HP</span> <span class="val">${(m.hp || 0).toLocaleString()}</span></div>
+        <div class="stat-item"><span class="lbl">攻击</span> <span class="val">${m.minAtk || 0}-${m.maxAtk || 0}</span></div>
+        <div class="stat-item"><span class="lbl">物防</span> <span class="val">${m.minDef || 0}</span></div>
+        <div class="stat-item"><span class="lbl">魔防</span> <span class="val">${m.minMagDef || 0}</span></div>
+        <div class="stat-item"><span class="lbl">经验</span> <span class="val">${(m.exp || 0).toLocaleString()}</span></div>
+      </div>
+      <div class="db-detail-section"><h4>⚔️ 技能</h4><div class="stat-grid">${skillsHtml}</div></div>
+      <div class="db-detail-section"><h4>📦 掉落（前16，塔内爆率×2）</h4><div class="stat-grid">${dropsHtml}</div></div>
+    </div>`;
+  }).join("");
+
+  return `<div class="db-detail-content">
+    <div style="background:#0f1726;padding:8px 12px;border-radius:6px;margin-bottom:10px;font-size:12px;color:#b0bec5">
+      🎫 门票 <b style="color:#ffd700">${f.cost.toLocaleString()}</b> 金币 ｜ 每天每层限挑战1次 ｜ 不能越层挑战 ｜ 塔内爆率 <b style="color:#66bb6a">×2</b>${f.floor === 30 ? ' ｜ 通关+1000万金币解锁<b style="color:#ce93d8">二大陆</b>' : ''}
+    </div>
+    ${cards}
+  </div>`;
+}
+
+function toggleTower(floor) { dbExpandedTower = dbExpandedTower === floor ? null : floor; renderTower(); }
 
 
 </script>
