@@ -5444,10 +5444,21 @@ function recommendEquip(job, tierLv) {
   // 力量戒指门槛：该等级基础物攻上限
   const baseAtkMax = baseStats.maxAtk;
   const idx = buildReverseIndex();
-  // 查装备的最低掉落怪等级（含通用掉落档位）；返回 null 表示无掉落数据（商店/任务，不拦）
+  // 查装备的最低掉落怪等级：专属掉落取 monLevel；通用掉落按档位估算(low=1,mid=11,high=21)
+  // 返回 null 表示无掉落数据（商店/任务，不拦）
   function minDropLv(name) {
     const sources = (idx.itemToSources && idx.itemToSources[name]) || [];
-    const lvls = sources.map(s => s.monLevel).filter(x => x != null);
+    const lvls = sources.map(s => {
+      if (s.generic) {
+        // 通用掉落档位 → 最低怪等级：Lvl≤20→1, Lvl 21-40→11, Lvl>40→21
+        if (!s.tier) return null;
+        if (s.tier.includes("≤20")) return 1;
+        if (s.tier.includes("21-40")) return 11;
+        if (s.tier.includes(">40")) return 21;
+        return null;
+      }
+      return s.monLevel;
+    }).filter(x => x != null);
     return lvls.length ? Math.min(...lvls) : null;
   }
   const results = [];
