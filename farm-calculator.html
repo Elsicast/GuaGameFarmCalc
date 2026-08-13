@@ -209,6 +209,14 @@ tr.impractical td.map-name b { color: #ff9800; }
     <button onclick="loadAndCalc()">解析并计算</button>
     <button class="secondary" onclick="loadSample()">加载示例（法师kui）</button>
     <button class="secondary" onclick="clearAll()">清空</button>
+    <label style="margin-left:auto;display:flex;align-items:center;gap:4px;font-size:13px;color:#b0bec5">每波怪物
+      <select id="wave-size" title="每波怪物数量（影响AOE/召唤/承伤，与游戏内设置一致）" onchange="loadAndCalc()">
+        <option value="1">1只</option>
+        <option value="3">3只</option>
+        <option value="5">5只</option>
+        <option value="10" selected>10只</option>
+      </select>
+    </label>
   </div>
   <div id="error-msg" class="error"></div>
 </div>
@@ -4161,11 +4169,18 @@ function rollDropExpect(monName, monLevel) {
   return { gold, hpPot, mpPot, hpHeal, mpHeal, items };
 }
 
+// 读取用户选择的波次大小（1/3/5/10，与游戏内设置一致；默认10）
+// 影响波次同场怪物数 → AOE/召唤/毒打几只、几只怪同时打玩家
+function getWaveSize() {
+  const sel = document.getElementById("wave-size");
+  return (sel && parseInt(sel.value)) || WAVE_SIZE;
+}
+
 // ---------- 主计算：单张地图收益（波次模型）----------
 // 波次 N=10 只同场：单点流(DS)只削主目标1只，AOE流(DA)每回合削全部 N 只
 // 清波回合 T = N×H / (DS + N×DA)；每分钟击杀 = 60×(DS + N×DA)/H×0.95
 function calcMap(map, player, stats, _dps, mpPerTurn, parts) {
-  const N = WAVE_SIZE;
+  const N = getWaveSize();
   const totalWeight = map.monsters.reduce((s, m) => s + m.count, 0);
   const buffDefBonus = getBuffDefBonus(player);
   const allDrops = {};
