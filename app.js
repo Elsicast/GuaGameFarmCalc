@@ -1264,7 +1264,8 @@ function recommendEquip(job, tierLv) {
       const vb = (b[1][mainStat] ? b[1][mainStat][1] : -1);
       return vb - va;
     });
-    // 取 count 个（手镯/戒指取2个，允许同名）
+    // 取 count 个推荐（手镯/戒指取2个）+ 备选列表（top 5，去重已推荐的）
+    const ALT_MAX = 5; // 每个槽位最多展示5个备选
     const picks = [];
     for (let i = 0; i < slot.count && i < sorted.length; i++) {
       const [name, it] = sorted[i];
@@ -1273,7 +1274,18 @@ function recommendEquip(job, tierLv) {
       picks.push({ name, item: it, mainVal, special: it.special || null,
         dropLv: mdl != null ? mdl : (it.level || tierLv) });
     }
-    results.push({ slot, picks });
+    // 备选：排序结果中不在 picks 的，取 top ALT_MAX 个
+    const pickNames = new Set(picks.map(p => p.name));
+    const alts = [];
+    for (const [name, it] of sorted) {
+      if (pickNames.has(name)) continue;
+      const mainVal = it[mainStat] ? it[mainStat][1] : 0;
+      const mdl = minDropLv(name);
+      alts.push({ name, item: it, mainVal, special: it.special || null,
+        dropLv: mdl != null ? mdl : (it.level || tierLv) });
+      if (alts.length >= ALT_MAX) break;
+    }
+    results.push({ slot, picks, alts });
   }
   return results;
 }
@@ -1391,18 +1403,23 @@ function renderRecommend() {
     const tierStats = getStats({ job, level: tier.lv, equipment: equipObj });
     const skills = recommendSkills(job, tier.lv, tier.slots, tierStats);
 
-    // 装备列表
-    const equipHtml = equips.map(({ slot, picks }) => {
+    // 装备列表：推荐(高亮) + 备选(top5)
+    const equipHtml = equips.map(({ slot, picks, alts }) => {
       if (picks.length === 0) {
         return `<div class="rec-equip-row"><span class="rec-slot">${slot.label}</span><span class="rec-empty">无可用装备</span></div>`;
       }
-      const itemsHtml = picks.map(p => {
+      const fmtItem = (p, isPick) => {
         const tip = itemTooltip(p.name);
         const specialTag = p.special ? `<span class="rec-special">${p.special}</span>` : "";
-        const dropTag = p.dropLv ? `<span class="rec-drop">掉落Lv${p.dropLv}</span>` : "";
-        return `<span class="rec-item" title="${tip}"><b>${p.name}</b> <span class="rec-stat">${equipStatSummary(p.item, job)}</span>${specialTag}${dropTag}</span>`;
-      }).join(" + ");
-      return `<div class="rec-equip-row"><span class="rec-slot">${slot.label}${slot.count>1?" ×"+slot.count:""}</span><span class="rec-items">${itemsHtml}</span></div>`;
+        const dropTag = p.dropLv ? `<span class="rec-drop">Lv${p.dropLv}</span>` : "";
+        const cls = isPick ? "rec-item rec-pick" : "rec-item rec-alt";
+        return `<span class="${cls}" title="${tip}"><b>${p.name}</b> <span class="rec-stat">${equipStatSummary(p.item, job)}</span>${specialTag}${dropTag}</span>`;
+      };
+      const pickHtml = picks.map(p => fmtItem(p, true)).join(slot.count > 1 ? " + " : "");
+      const altHtml = alts.length > 0
+        ? `<div class="rec-alts">${alts.map(p => fmtItem(p, false)).join("")}</div>`
+        : "";
+      return `<div class="rec-equip-row"><span class="rec-slot">${slot.label}${slot.count>1?" ×"+slot.count:""}</span><div class="rec-items">${pickHtml}${altHtml}</div></div>`;
     }).join("");
 
     // 技能列表
