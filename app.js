@@ -1270,9 +1270,13 @@ function recommendEquip(job, tierLv) {
 }
 
 // 技能推荐：选出该等级能学且最强的 N 个技能
+// 核心机制（复刻 game.js/app.js）：
+// - AOE 技能 damageBonus 累加，法师全额溅射每只怪、0蓝耗 → 法师优先堆 AOE
+// - 单体 attack 技能每个耗 2MP/回合，只打主目标
+// - buff 减伤累加（上限85%）：法师魔法盾0.30+分身0.40=0.70，脆皮法师必上双减伤
 function recommendSkills(job, tierLv, slots) {
   const available = Object.entries(SKILLS).filter(([n, s]) => s.job === job && s.levelReq <= tierLv);
-  // 分类
+  // 分类并按 damageBonus 降序
   const aoeAttacks = available.filter(([n, s]) => s.type === "attack" && s.aoe).sort((a, b) => b[1].damageBonus - a[1].damageBonus);
   const singleAttacks = available.filter(([n, s]) => s.type === "attack" && !s.aoe).sort((a, b) => b[1].damageBonus - a[1].damageBonus);
   const buffs = available.filter(([n, s]) => s.type === "buff").sort((a, b) => b[1].damageBonus - a[1].damageBonus);
@@ -1288,27 +1292,37 @@ function recommendSkills(job, tierLv, slots) {
     picked.push({ name: entry[0], skill: entry[1], reason });
     return true;
   };
+  const full = () => picked.length >= slots;
 
-  // 策略：优先 AOE 输出 → 单体输出 → 召唤(道士) → 减伤buff → 被动 → 治疗
-  // 1. 最强 AOE（如果有）
-  if (aoeAttacks.length > 0) push(aoeAttacks[0], "主力AOE");
-  // 2. 最强单体攻击
-  if (singleAttacks.length > 0) push(singleAttacks[0], singleAttacks[0][1].aoe ? "AOE输出" : "单体输出");
-  // 3. 第二强攻击（AOE或单体，取 damageBonus 更高的）
-  const allAttacks = [...aoeAttacks, ...singleAttacks].sort((a, b) => b[1].damageBonus - a[1].damageBonus);
-  if (allAttacks[1]) push(allAttacks[1], allAttacks[1][1].aoe ? "AOE输出" : "单体输出");
-  // 4. 召唤（道士核心）
-  if (summons.length > 0) push(summons[0], "召唤宝宝");
-  // 5. 减伤 buff（法师魔法盾/分身、道士阴阳盾、战士护身气幕）
-  if (buffs.length > 0) push(buffs[0], "减伤增益");
-  // 6. 被动（战士基本剑术/道士精神力战法）
-  if (passives.length > 0) push(passives[0], "被动加成");
-  // 7. 治疗（道士治愈术）
-  if (heals.length > 0) push(heals[0], "回血");
-  // 8. 还没填满，继续补剩余攻击技能
-  for (const e of allAttacks.slice(2)) {
-    if (picked.length >= slots) break;
-    push(e, e[1].aoe ? "AOE输出" : "单体输出");
+  if (job === "mage") {
+    // 法师脆皮(HP低)，减伤buff优先占槽：魔法盾0.30+分身术0.40叠加=70%减伤，几乎必带
+    // 先上所有可用 buff（最多2个），再用 AOE(0蓝耗打全场)填满，单体(耗蓝仅打主目标)最后
+    for (const e of buffs) { if (full()) break; push(e, "减伤" + Math.round(e[1].damageBonus * 100) + "%"); }
+    for (const e of aoeAttacks) { if (full()) break; push(e, "AOE输出"); }
+    for (const e of singleAttacks) { if (full()) break; push(e, "单体输出"); }
+  } else if (job === "taoist") {
+    // 道士：召唤(宝宝群攻) → AOE(瘟疫/毒云) → 阴阳盾减伤 → 施毒术 → 单体(灵魂火符)
+    if (summons.length > 0) push(summons[0], "召唤宝宝");
+    for (const e of aoeAttacks) { if (full()) break; push(e, "AOE输出"); }
+    if (buffs.length > 0 && !full()) push(buffs[0], "减伤" + Math.round(buffs[0][1].damageBonus * 100) + "%");
+    // 施毒术（道士核心 DOT，独立通道）
+    const poison = singleAttacks.find(e => e[0] === "施毒术");
+    if (poison && !full()) push(poison, "持续毒伤");
+    if (singleAttacks.length > 0 && !full()) {
+      const main = singleAttacks.find(e => e[0] !== "施毒术") || singleAttacks[0];
+      push(main, "单体输出");
+    }
+    if (passives.length > 0 && !full()) push(passives[0], "被动加成");
+    if (heals.length > 0 && !full()) push(heals[0], "回血");
+  } else {
+    // 战士：AOE优先(半月弯刀/剑气爆) → 单体最多1个(MP少) → 护身气幕减伤 → 被动
+    for (const e of aoeAttacks) { if (full()) break; push(e, "AOE输出"); }
+    // 战士 MP 少，单体最多带 1 个最强
+    if (singleAttacks.length > 0 && !full()) push(singleAttacks[0], "单体输出");
+    if (buffs.length > 0 && !full()) push(buffs[0], "减伤" + Math.round(buffs[0][1].damageBonus * 100) + "%");
+    if (passives.length > 0 && !full()) push(passives[0], "被动加成");
+    // 剩余空槽补次强单体
+    for (const e of singleAttacks.slice(1)) { if (full()) break; push(e, "单体输出"); }
   }
 
   return picked.slice(0, slots);
