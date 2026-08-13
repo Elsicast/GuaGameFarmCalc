@@ -1284,6 +1284,7 @@ function recommendEquip(job, tierLv) {
       const mainVal = it[mainStat] ? it[mainStat][1] : 0;
       const mdl = minDropLv(name);
       const pick = { name, item: it, mainVal, special: it.special || null,
+        equipLv: it.level || 0,
         dropLv: mdl != null ? mdl : (it.level || tierLv), dup: slot.count > 1 };
       for (let i = 0; i < slot.count; i++) picks.push(pick);
     }
@@ -1295,6 +1296,7 @@ function recommendEquip(job, tierLv) {
       const mainVal = it[mainStat] ? it[mainStat][1] : 0;
       const mdl = minDropLv(name);
       alts.push({ name, item: it, mainVal, special: it.special || null,
+        equipLv: it.level || 0,
         dropLv: mdl != null ? mdl : (it.level || tierLv) });
       if (alts.length >= ALT_MAX) break;
     }
@@ -1424,9 +1426,9 @@ function renderRecommend() {
       const fmtItem = (p, isPick) => {
         const tip = itemTooltip(p.name);
         const specialTag = p.special ? `<span class="rec-special">${p.special}</span>` : "";
-        const dropTag = p.dropLv ? `<span class="rec-drop">Lv${p.dropLv}</span>` : "";
+        const lvTag = `<span class="rec-drop">穿${p.equipLv||1}·掉${p.dropLv}</span>`;
         const cls = isPick ? "rec-item rec-pick" : "rec-item rec-alt";
-        return `<span class="${cls}" title="${tip}"><b>${p.name}</b> <span class="rec-stat">${equipStatSummary(p.item, job)}</span>${specialTag}${dropTag}</span>`;
+        return `<span class="${cls}" title="${tip}"><b>${p.name}</b> <span class="rec-stat">${equipStatSummary(p.item, job)}</span>${specialTag}${lvTag}</span>`;
       };
       // 同名×2：双槽推荐同一件装备时显示"×2(需两件)"，避免重复渲染
       let pickHtml;
@@ -1434,8 +1436,8 @@ function renderRecommend() {
         const p = picks[0];
         const tip = itemTooltip(p.name);
         const specialTag = p.special ? `<span class="rec-special">${p.special}</span>` : "";
-        const dropTag = p.dropLv ? `<span class="rec-drop">Lv${p.dropLv}</span>` : "";
-        pickHtml = `<span class="rec-item rec-pick" title="${tip}"><b>${p.name} ×2</b> <span class="rec-stat">${equipStatSummary(p.item, job)}</span>${specialTag}${dropTag}<span class="rec-need2">需两件</span></span>`;
+        const lvTag = `<span class="rec-drop">穿${p.equipLv||1}·掉${p.dropLv}</span>`;
+        pickHtml = `<span class="rec-item rec-pick" title="${tip}"><b>${p.name} ×2</b> <span class="rec-stat">${equipStatSummary(p.item, job)}</span>${specialTag}${lvTag}<span class="rec-need2">需两件</span></span>`;
       } else {
         pickHtml = picks.map(p => fmtItem(p, true)).join(slot.count > 1 ? " + " : "");
       }
