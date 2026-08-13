@@ -259,6 +259,7 @@ tr.impractical td.map-name b { color: #ff9800; }
 .rec-special {
   background: #4a148c; color: #e1bee7; padding: 0 4px; border-radius: 2px; font-size: 10px;
 }
+.rec-drop { color: #666; font-size: 10px; }
 .rec-empty { color: #666; font-size: 11px; }
 
 .rec-skills { display: flex; flex-wrap: wrap; gap: 6px; }

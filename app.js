@@ -1223,36 +1223,43 @@ function setRecommendJob(job, btn) {
   renderRecommend();
 }
 
-// 装备推荐：对每个槽位选出该职业该等级能穿的主属性最高的装备
+// 装备推荐：对每个槽位选出该职业该等级能穿、且能实际获取的主属性最高的装备
+// 可获取性：装备掉落怪的最低等级不超过 tierLv+ACQ_MARGIN（避免推荐打不了的装备）
+const ACQ_MARGIN = 10; // 允许稍微越级打怪获取
 function recommendEquip(job, tierLv) {
   const mainStat = JOB_MAIN_STAT[job];
   const baseStats = getJobBaseStats(job, tierLv);
   // 力量戒指门槛：该等级基础物攻上限
   const baseAtkMax = baseStats.maxAtk;
+  const idx = buildReverseIndex();
+  // 查装备的最低掉落怪等级（含通用掉落档位）；返回 null 表示无掉落数据（商店/任务，不拦）
+  function minDropLv(name) {
+    const sources = (idx.itemToSources && idx.itemToSources[name]) || [];
+    const lvls = sources.map(s => s.monLevel).filter(x => x != null);
+    return lvls.length ? Math.min(...lvls) : null;
+  }
   const results = [];
   for (const slot of EQUIP_SLOTS) {
     // 筛选该槽位可用装备
     const candidates = Object.entries(ITEMS).filter(([name, it]) => {
       if (it.type !== slot.type) return false;
       if (it.job && it.job !== job && it.job !== "all") return false;
-      // 等级要求（无 level 字段的不受等级限，如药水；但装备一般有 level）
       if (it.level && it.level > tierLv) return false;
-      // 力量戒指类 needAtk 门槛
       if (it.needAtk && baseAtkMax < it.needAtk) return false;
-      // 跳过非装备类型（技能书/药水/材料不会进这些槽位，但保险）
       if (["skillbook", "potion", "material", "buff"].includes(it.type)) return false;
+      // 可获取性：掉落怪等级不超过 tierLv+ACQ_MARGIN（无掉落数据的不拦，可能是商店购买）
+      const mdl = minDropLv(name);
+      if (mdl != null && mdl > tierLv + ACQ_MARGIN) return false;
       return true;
     });
     // 排序：输出类槽位(武器/戒指/项链)按主属性上限；防具类(衣服/头盔/手镯/鞋子/腰带/宝玉)按防御(def+magDef上限之和)
     const isDefSlot = ["armor", "helmet", "bracelet", "boots", "belt", "jade"].includes(slot.type);
     const sorted = candidates.sort((a, b) => {
       if (isDefSlot) {
-        // 防具：按 def上限 + magDef上限 之和降序；无防具属性的按 0
         const da = (a[1].def ? a[1].def[1] : 0) + (a[1].magDef ? a[1].magDef[1] : 0);
         const db = (b[1].def ? b[1].def[1] : 0) + (b[1].magDef ? b[1].magDef[1] : 0);
         return db - da;
       }
-      // 输出类：按主属性上限降序
       const va = (a[1][mainStat] ? a[1][mainStat][1] : -1);
       const vb = (b[1][mainStat] ? b[1][mainStat][1] : -1);
       return vb - va;
@@ -1262,7 +1269,9 @@ function recommendEquip(job, tierLv) {
     for (let i = 0; i < slot.count && i < sorted.length; i++) {
       const [name, it] = sorted[i];
       const mainVal = it[mainStat] ? it[mainStat][1] : 0;
-      picks.push({ name, item: it, mainVal, special: it.special || null });
+      const mdl = minDropLv(name);
+      picks.push({ name, item: it, mainVal, special: it.special || null,
+        dropLv: mdl != null ? mdl : (it.level || tierLv) });
     }
     results.push({ slot, picks });
   }
@@ -1390,7 +1399,8 @@ function renderRecommend() {
       const itemsHtml = picks.map(p => {
         const tip = itemTooltip(p.name);
         const specialTag = p.special ? `<span class="rec-special">${p.special}</span>` : "";
-        return `<span class="rec-item" title="${tip}"><b>${p.name}</b> <span class="rec-stat">${equipStatSummary(p.item, job)}</span>${specialTag}</span>`;
+        const dropTag = p.dropLv ? `<span class="rec-drop">掉落Lv${p.dropLv}</span>` : "";
+        return `<span class="rec-item" title="${tip}"><b>${p.name}</b> <span class="rec-stat">${equipStatSummary(p.item, job)}</span>${specialTag}${dropTag}</span>`;
       }).join(" + ");
       return `<div class="rec-equip-row"><span class="rec-slot">${slot.label}${slot.count>1?" ×"+slot.count:""}</span><span class="rec-items">${itemsHtml}</span></div>`;
     }).join("");
