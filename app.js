@@ -244,11 +244,18 @@ function rollDropExpect(monName, monLevel) {
   return { gold, hpPot, mpPot, hpHeal, mpHeal, items };
 }
 
+// 读取用户选择的波次大小（1/3/5/10，与游戏内设置一致；默认10）
+// 影响波次同场怪物数 → AOE/召唤/毒打几只、几只怪同时打玩家
+function getWaveSize() {
+  const sel = document.getElementById("wave-size");
+  return (sel && parseInt(sel.value)) || WAVE_SIZE;
+}
+
 // ---------- 主计算：单张地图收益（波次模型）----------
 // 波次 N=10 只同场：单点流(DS)只削主目标1只，AOE流(DA)每回合削全部 N 只
 // 清波回合 T = N×H / (DS + N×DA)；每分钟击杀 = 60×(DS + N×DA)/H×0.95
 function calcMap(map, player, stats, _dps, mpPerTurn, parts) {
-  const N = WAVE_SIZE;
+  const N = getWaveSize();
   const totalWeight = map.monsters.reduce((s, m) => s + m.count, 0);
   const buffDefBonus = getBuffDefBonus(player);
   const allDrops = {};

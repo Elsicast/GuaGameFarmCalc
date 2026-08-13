@@ -16,6 +16,14 @@
     <button onclick="loadAndCalc()">解析并计算</button>
     <button class="secondary" onclick="loadSample()">加载示例（法师kui）</button>
     <button class="secondary" onclick="clearAll()">清空</button>
+    <label style="margin-left:auto;display:flex;align-items:center;gap:4px;font-size:13px;color:#b0bec5">每波怪物
+      <select id="wave-size" title="每波怪物数量（影响AOE/召唤/承伤，与游戏内设置一致）" onchange="loadAndCalc()">
+        <option value="1">1只</option>
+        <option value="3">3只</option>
+        <option value="5">5只</option>
+        <option value="10" selected>10只</option>
+      </select>
+    </label>
   </div>
   <div id="error-msg" class="error"></div>
 </div>
