@@ -264,6 +264,7 @@ tr.impractical td.map-name b { color: #ff9800; }
 .rec-pick { background: #1b3a5c; border: 1px solid #1976d2; }
 .rec-alt { background: transparent; padding: 1px 4px; font-size: 11px; opacity: 0.7; }
 .rec-alts { margin-top: 3px; display: flex; flex-wrap: wrap; gap: 3px; }
+.rec-need2 { color: #ffd54f; font-size: 9px; margin-left: 2px; }
 
 .rec-skills { display: flex; flex-wrap: wrap; gap: 6px; }
 .rec-skill {

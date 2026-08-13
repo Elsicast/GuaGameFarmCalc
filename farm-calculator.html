@@ -271,6 +271,7 @@ tr.impractical td.map-name b { color: #ff9800; }
 .rec-pick { background: #1b3a5c; border: 1px solid #1976d2; }
 .rec-alt { background: transparent; padding: 1px 4px; font-size: 11px; opacity: 0.7; }
 .rec-alts { margin-top: 3px; display: flex; flex-wrap: wrap; gap: 3px; }
+.rec-need2 { color: #ffd54f; font-size: 9px; margin-left: 2px; }
 
 .rec-skills { display: flex; flex-wrap: wrap; gap: 6px; }
 .rec-skill {
@@ -5489,13 +5490,15 @@ function recommendEquip(job, tierLv) {
     });
     // 取 count 个推荐（手镯/戒指取2个）+ 备选列表（top 5，去重已推荐的）
     const ALT_MAX = 5; // 每个槽位最多展示5个备选
+    // 推荐：游戏允许双槽装同名装备，手镯/戒指取 top1 重复 count 次（同名×2，属性最优）
     const picks = [];
-    for (let i = 0; i < slot.count && i < sorted.length; i++) {
-      const [name, it] = sorted[i];
+    if (sorted.length > 0) {
+      const [name, it] = sorted[0];
       const mainVal = it[mainStat] ? it[mainStat][1] : 0;
       const mdl = minDropLv(name);
-      picks.push({ name, item: it, mainVal, special: it.special || null,
-        dropLv: mdl != null ? mdl : (it.level || tierLv) });
+      const pick = { name, item: it, mainVal, special: it.special || null,
+        dropLv: mdl != null ? mdl : (it.level || tierLv), dup: slot.count > 1 };
+      for (let i = 0; i < slot.count; i++) picks.push(pick);
     }
     // 备选：排序结果中不在 picks 的，取 top ALT_MAX 个
     const pickNames = new Set(picks.map(p => p.name));
@@ -5638,7 +5641,17 @@ function renderRecommend() {
         const cls = isPick ? "rec-item rec-pick" : "rec-item rec-alt";
         return `<span class="${cls}" title="${tip}"><b>${p.name}</b> <span class="rec-stat">${equipStatSummary(p.item, job)}</span>${specialTag}${dropTag}</span>`;
       };
-      const pickHtml = picks.map(p => fmtItem(p, true)).join(slot.count > 1 ? " + " : "");
+      // 同名×2：双槽推荐同一件装备时显示"×2(需两件)"，避免重复渲染
+      let pickHtml;
+      if (slot.count > 1 && picks.length === 2 && picks[0].name === picks[1].name) {
+        const p = picks[0];
+        const tip = itemTooltip(p.name);
+        const specialTag = p.special ? `<span class="rec-special">${p.special}</span>` : "";
+        const dropTag = p.dropLv ? `<span class="rec-drop">Lv${p.dropLv}</span>` : "";
+        pickHtml = `<span class="rec-item rec-pick" title="${tip}"><b>${p.name} ×2</b> <span class="rec-stat">${equipStatSummary(p.item, job)}</span>${specialTag}${dropTag}<span class="rec-need2">需两件</span></span>`;
+      } else {
+        pickHtml = picks.map(p => fmtItem(p, true)).join(slot.count > 1 ? " + " : "");
+      }
       const altHtml = alts.length > 0
         ? `<div class="rec-alts">${alts.map(p => fmtItem(p, false)).join("")}</div>`
         : "";
