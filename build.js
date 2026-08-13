@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 
 const DIR = __dirname;
-const dataFiles = ['expTable.js', 'jobStats.js', 'monsters.js', 'maps.js', 'items.js', 'skills.js', 'drops.js'];
+const dataFiles = ['expTable.js', 'jobStats.js', 'monsters.js', 'maps.js', 'items.js', 'skills.js', 'drops.js', 'tower.js'];
 
 // 读取所有数据文件，原样作为脚本内容
 const dataScripts = dataFiles.map(f => {

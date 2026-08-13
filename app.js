@@ -608,6 +608,7 @@ function switchDbSection(section, btn) {
   if (section === "items") renderItems();
   else if (section === "monsters") renderMonsters();
   else if (section === "skills") renderSkills();
+  else if (section === "tower") renderTower();
 }
 
 // === 初始化下拉选项 ===
@@ -842,4 +843,118 @@ function renderSkills() {
     return row + detail;
   }).join("");
 }
+
+// === 通天塔 ===
+let dbExpandedTower = null;
+const TOWER_MON_RANK = { normal: 1, elite: 2, boss: 3 };
+
+// 解析 tower.js 怪物定义为统一结构（复刻 game.js spawnTowerMonster）
+// def.ref → 引用 MONSTERS 已有怪物；否则用内联属性（通天塔专属怪）
+function resolveTowerMon(def) {
+  if (def.ref) {
+    const t = MONSTERS[def.ref];
+    if (!t) return { name: def.ref, hp: 0, minAtk: 0, maxAtk: 0, minDef: 0, minMagDef: 0, exp: 0, level: 0, type: 'normal', source: 'ref' };
+    return Object.assign({ name: def.ref, source: 'ref' }, t);
+  }
+  return {
+    name: def.name, hp: def.hp, minAtk: def.minAtk, maxAtk: def.maxAtk,
+    minDef: def.minDef || 0, minMagDef: def.minMagDef || 0,
+    exp: def.exp, level: def.level, type: def.type, skills: def.skills,
+    source: 'custom'
+  };
+}
+
+function renderTower() {
+  const fmin = parseInt(document.getElementById("tower-filter-min").value) || 1;
+  const fmax = parseInt(document.getElementById("tower-filter-max").value) || 30;
+  const ftype = document.getElementById("tower-filter-type").value;
+  const kw = document.getElementById("tower-filter-kw").value.trim().toLowerCase();
+
+  let list = TOWER_FLOORS.filter(f => {
+    if (f.floor < fmin || f.floor > fmax) return false;
+    const mons = f.monsters.map(resolveTowerMon);
+    if (ftype === "boss" && !mons.some(m => m.type === "boss")) return false;
+    if (ftype === "elite" && !mons.some(m => m.type === "boss" || m.type === "elite")) return false;
+    if (kw && !mons.some(m => m.name.toLowerCase().includes(kw))) return false;
+    return true;
+  });
+  document.getElementById("tower-count").textContent = `${list.length} 层`;
+  document.getElementById("tower-body").innerHTML = list.map(renderTowerRow).join("");
+}
+
+function renderTowerRow(f) {
+  const mons = f.monsters.map(resolveTowerMon);
+  const isExpanded = dbExpandedTower === f.floor;
+  const monTags = mons.map(m => `<span class="mtype-${m.type || 'normal'}" style="margin-right:6px">${m.name}</span>`).join("");
+  const totalHp = mons.reduce((s, m) => s + (m.hp || 0), 0);
+  const maxLv = mons.length ? Math.max.apply(null, mons.map(m => m.level || 0)) : 0;
+  const topType = mons.reduce((a, m) => (TOWER_MON_RANK[m.type] > TOWER_MON_RANK[a] ? m.type : a), "normal");
+  const topText = { normal: "普通", elite: "精英", boss: "Boss" }[topType] || topType;
+  // 掉落预览：合并该层所有怪的专属掉落物品名（去重）
+  const dropItems = [];
+  mons.forEach(m => {
+    const d = DROPS[m.name];
+    if (d) d.forEach(x => { if (x.item !== "金币" && !dropItems.includes(x.item)) dropItems.push(x.item); });
+  });
+  const dropPreview = dropItems.slice(0, 4).map(it => `<span style="font-size:11px;color:#90caf9;margin-right:4px">${it}</span>`).join("")
+    + (dropItems.length > 4 ? `<span style="font-size:11px;color:#666">等${dropItems.length}</span>` : "")
+    || '<span style="font-size:11px;color:#666">通用掉落</span>';
+
+  const row = `<tr onclick="toggleTower(${f.floor})">
+    <td><b>第${f.floor}层</b></td>
+    <td class="num">${f.cost.toLocaleString()}</td>
+    <td>${monTags}</td>
+    <td class="num">${totalHp.toLocaleString()}</td>
+    <td class="num">${maxLv}</td>
+    <td class="mtype-${topType}">${topText}</td>
+    <td>${dropPreview}</td>
+  </tr>`;
+  const detail = isExpanded ? `<tr class="db-detail-row"><td colspan="7">${renderTowerDetail(f, mons)}</td></tr>` : "";
+  return row + detail;
+}
+
+function renderTowerDetail(f, mons) {
+  const cards = mons.map(m => {
+    const typeText = { normal: "普通", elite: "精英", boss: "Boss" }[m.type] || m.type || "普通";
+    const srcTag = m.source === "ref"
+      ? '<span style="font-size:11px;color:#66bb6a">引用已有</span>'
+      : '<span style="font-size:11px;color:#ce93d8">通天塔专属</span>';
+    const skillsHtml = (m.skills && m.skills.length)
+      ? m.skills.map(s => `<div class="stat-item"><span class="lbl">${s.name}[${s.type}]</span> <span class="val">${(s.chance*100).toFixed(0)}%${s.power ? ` ×${s.power}` : ""}</span></div>`).join("")
+      : '<div style="color:#666">无技能</div>';
+    let drops = DROPS[m.name];
+    if (!drops) {
+      const tier = (m.level || 0) <= 20 ? "low" : ((m.level || 0) <= 40 ? "mid" : "high");
+      drops = GENERIC_DROPS[tier];
+    }
+    const dropsHtml = (Array.isArray(drops) ? drops : []).filter(d => d.item !== "金币").slice(0, 16).map(d => {
+      const it = ITEMS[d.item];
+      const tag = it ? `<span class="type-tag ${it.type}">${TYPE_NAMES[it.type] || it.type}</span>` : "";
+      return `<div class="stat-item">${tag} <span class="val">${d.item}</span> <span class="lbl">1/${d.chance}</span></div>`;
+    }).join("") || '<div style="color:#666">无掉落</div>';
+
+    return `<div class="db-detail-section">
+      <h4><span class="mtype-${m.type || 'normal'}">${m.name}</span> <span style="font-size:12px;color:#888">${typeText}</span> ${srcTag}</h4>
+      <div class="stat-grid">
+        <div class="stat-item"><span class="lbl">等级</span> <span class="val">${m.level || 0}</span></div>
+        <div class="stat-item"><span class="lbl">HP</span> <span class="val">${(m.hp || 0).toLocaleString()}</span></div>
+        <div class="stat-item"><span class="lbl">攻击</span> <span class="val">${m.minAtk || 0}-${m.maxAtk || 0}</span></div>
+        <div class="stat-item"><span class="lbl">物防</span> <span class="val">${m.minDef || 0}</span></div>
+        <div class="stat-item"><span class="lbl">魔防</span> <span class="val">${m.minMagDef || 0}</span></div>
+        <div class="stat-item"><span class="lbl">经验</span> <span class="val">${(m.exp || 0).toLocaleString()}</span></div>
+      </div>
+      <div class="db-detail-section"><h4>⚔️ 技能</h4><div class="stat-grid">${skillsHtml}</div></div>
+      <div class="db-detail-section"><h4>📦 掉落（前16，塔内爆率×2）</h4><div class="stat-grid">${dropsHtml}</div></div>
+    </div>`;
+  }).join("");
+
+  return `<div class="db-detail-content">
+    <div style="background:#0f1726;padding:8px 12px;border-radius:6px;margin-bottom:10px;font-size:12px;color:#b0bec5">
+      🎫 门票 <b style="color:#ffd700">${f.cost.toLocaleString()}</b> 金币 ｜ 每天每层限挑战1次 ｜ 不能越层挑战 ｜ 塔内爆率 <b style="color:#66bb6a">×2</b>${f.floor === 30 ? ' ｜ 通关+1000万金币解锁<b style="color:#ce93d8">二大陆</b>' : ''}
+    </div>
+    ${cards}
+  </div>`;
+}
+
+function toggleTower(floor) { dbExpandedTower = dbExpandedTower === floor ? null : floor; renderTower(); }
 

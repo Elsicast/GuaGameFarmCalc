@@ -50,6 +50,7 @@
       <button class="db-nav-item active" onclick="switchDbSection('items', this)">⚔️ 装备物品</button>
       <button class="db-nav-item" onclick="switchDbSection('monsters', this)">👹 怪物图鉴</button>
       <button class="db-nav-item" onclick="switchDbSection('skills', this)">✨ 技能库</button>
+      <button class="db-nav-item" onclick="switchDbSection('tower', this)">🗼 通天塔</button>
     </div>
     <div class="db-content">
       <!-- 装备物品 -->
@@ -146,6 +147,30 @@
               <th>技能名</th><th>职业</th><th>类型</th><th>等级</th><th>加成</th><th>冷却</th><th>AOE</th><th>描述</th>
             </tr></thead>
             <tbody id="skills-body"></tbody>
+          </table>
+        </div>
+      </div>
+      <!-- 通天塔 -->
+      <div id="db-section-tower" class="db-section" style="display:none;">
+        <div class="filter-bar">
+          <label>层</label>
+          <input type="number" id="tower-filter-min" placeholder="min" style="width:50px" onchange="renderTower()" min="1" max="30">
+          ~<input type="number" id="tower-filter-max" placeholder="max" style="width:50px" onchange="renderTower()" min="1" max="30">
+          <label>类型</label>
+          <select id="tower-filter-type" onchange="renderTower()">
+            <option value="">全部</option>
+            <option value="boss">含Boss</option>
+            <option value="elite">含精英</option>
+          </select>
+          <input type="text" id="tower-filter-kw" placeholder="🔍 搜索怪物名..." oninput="renderTower()">
+          <span class="filter-count" id="tower-count"></span>
+        </div>
+        <div style="overflow-x:auto; max-height: 70vh;">
+          <table class="db-table" id="tower-table">
+            <thead><tr>
+              <th>层</th><th>门票</th><th>怪物构成</th><th>总HP</th><th>最高等级</th><th>类型</th><th>掉落预览</th>
+            </tr></thead>
+            <tbody id="tower-body"></tbody>
           </table>
         </div>
       </div>
