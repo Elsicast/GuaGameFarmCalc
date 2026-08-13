@@ -124,6 +124,11 @@ tr.impractical td.map-name b { color: #ff9800; }
 }
 .filter-bar input[type="text"] { min-width: 140px; }
 .filter-count { color: #4fc3f7; font-size: 12px; margin-left: auto; }
+.filter-btn {
+  background: #1a237e; color: #b0bec5; border: 1px solid #283593; border-radius: 3px;
+  padding: 5px 10px; font-size: 12px; cursor: pointer; transition: all 0.15s;
+}
+.filter-btn:hover { background: #283593; color: #fff; }
 
 /* === 数据库表格 === */
 .db-table { width: 100%; border-collapse: collapse; font-size: 12px; }
@@ -201,10 +206,15 @@ tr.impractical td.map-name b { color: #ff9800; }
   background: #0f1726; border: 1px solid #1e2a47; border-radius: 6px;
   padding: 0; overflow: hidden;
 }
+.region-card.collapsed { opacity: 0.85; }
 .region-card-header {
   background: #1a237e; padding: 6px 10px; font-size: 13px; color: #fff;
   display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  cursor: pointer; user-select: none; transition: background 0.15s;
 }
+.region-card-header:hover { background: #283593; }
+.region-toggle { display: inline-block; width: 12px; color: #90caf9; font-size: 11px; }
+.region-card-summary { color: #b0bec5; font-size: 11px; }
 .region-card-lv { margin-left: auto; font-size: 11px; color: #90caf9; }
 .region-mons { padding: 6px; display: grid; gap: 6px; }
 .region-mon {
@@ -222,6 +232,31 @@ tr.impractical td.map-name b { color: #ff9800; }
 .region-drop-item .prob { color: #888; font-size: 10px; }
 .region-drops-empty { color: #666; font-size: 11px; margin-top: 3px; }
 .region-drops-generic { color: #90caf9; font-size: 11px; margin-top: 3px; font-style: italic; }
+/* 地区卡片掉落：通用/独特 角标 */
+.region-drop-badge {
+  font-size: 9px; padding: 0 3px; border-radius: 2px; margin-right: 2px; font-weight: bold;
+}
+.region-drop-badge.uniq { background: #4a148c; color: #e1bee7; }   /* 独特：紫 */
+.region-drop-badge.gen  { background: #37474f; color: #b0bec5; }   /* 通用：灰 */
+.region-drop-item.is-uniq { border-left: 2px solid #7b1fa2; }
+.region-drop-item.is-gen  { opacity: 0.75; }
+
+/* 怪物详情：掉落分组 + 通用/独特角标 */
+.drop-group { margin-bottom: 8px; }
+.drop-group:last-child { margin-bottom: 0; }
+.drop-group-label {
+  font-size: 11px; color: #90caf9; margin-bottom: 4px; font-weight: bold;
+  display: flex; align-items: center; gap: 6px;
+}
+.drop-count {
+  background: #1e2a47; color: #b0bec5; font-size: 10px; padding: 0 5px; border-radius: 8px;
+}
+.drop-tier-tag { color: #888; font-size: 10px; font-weight: normal; }
+.drop-badge {
+  font-size: 9px; padding: 0 4px; border-radius: 2px; margin-right: 3px; font-weight: bold;
+}
+.drop-badge.uniq { background: #4a148c; color: #e1bee7; }  /* 独特：紫 */
+.drop-badge.gen  { background: #37474f; color: #b0bec5; }  /* 通用：灰 */
 
 /* === 装备推荐 === */
 .recommend-job-tabs { display: flex; gap: 8px; margin-bottom: 12px; }

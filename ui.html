@@ -138,6 +138,8 @@
             <option value="2">二大陆</option>
           </select>
           <input type="text" id="region-filter-kw" placeholder="🔍 搜索地图名/怪物名..." oninput="renderRegions()">
+          <button class="filter-btn" onclick="expandAllRegions()">展开全部</button>
+          <button class="filter-btn" onclick="collapseAllRegions()">收起全部</button>
           <span class="filter-count" id="region-count"></span>
         </div>
         <div id="region-generic-drops"></div>

@@ -225,6 +225,18 @@ function getDropTable(monName, monLevel) {
   return t;
 }
 
+// 缓存：所有通用掉落表里的物品名集合（用于区分"通用/独特"掉落）
+let _genericItemSet = null;
+function getGenericItemSet() {
+  if (_genericItemSet) return _genericItemSet;
+  _genericItemSet = new Set();
+  for (const tier of ["low", "mid", "high"]) {
+    const table = GENERIC_DROPS[tier] || [];
+    for (const d of table) if (d.item !== "金币") _genericItemSet.add(d.item);
+  }
+  return _genericItemSet;
+}
+
 // 计算某怪的金币期望 + 药水期望（瓶数 + 回血/回蓝量，按该怪自己的掉落档）
 function rollDropExpect(monName, monLevel) {
   const table = getDropTable(monName, monLevel);
@@ -863,22 +875,44 @@ function renderMonDetail(name, m, maps) {
   if (m.skills && m.skills.length) {
     skillsHtml = m.skills.map(s => `<div class="stat-item"><span class="lbl">${s.name} [${s.type}]</span> <span class="val">概率${(s.chance*100).toFixed(0)}%${s.power?` 威力×${s.power}`:""}</span></div>`).join("");
   }
-  // 掉落
-  let drops = DROPS[name];
-  if (!drops) {
+  // 掉落：区分专属表 vs 通用回退；专属表内再区分"独特"(仅此怪/少数怪)与"通用"(通用表也有)
+  const explicitDrops = resolveDropTable(name); // 解析字符串别名，返回数组或 null
+  let dropsHtml;
+  if (explicitDrops) {
+    // 有专属掉落表：按 通用/独特 分组，独特在前
+    const genSet = getGenericItemSet();
+    const uniq = [], gen = [];
+    for (const d of explicitDrops) {
+      if (d.item === "金币") continue;
+      (genSet.has(d.item) ? gen : uniq).push(d);
+    }
+    const renderGrp = (arr, label, badgeCls) => arr.length ? `<div class="drop-group">
+      <div class="drop-group-label">${label} <span class="drop-count">${arr.length}</span></div>
+      <div class="stat-grid">${arr.map(d => {
+        const it = ITEMS[d.item];
+        const typeTag = it ? `<span class="type-tag ${it.type}">${TYPE_NAMES[it.type]||it.type}</span>` : "";
+        const badge = `<span class="drop-badge ${badgeCls}">${badgeCls==="uniq"?"独特":"通用"}</span>`;
+        return `<div class="stat-item" title="${itemTooltip(d.item)}">${typeTag}${badge} <span class="val">${d.item}</span> <span class="lbl">1/${d.chance}</span></div>`;
+      }).join("")}</div></div>` : "";
+    dropsHtml = renderGrp(uniq, "独特掉落", "uniq") + renderGrp(gen, "通用掉落", "gen") || '<div style="color:#666">无掉落</div>';
+  } else {
+    // 无专属表：套用通用掉落表（按怪物等级分档）
     const tier = m.level <= 20 ? "low" : (m.level <= 40 ? "mid" : "high");
-    drops = GENERIC_DROPS[tier];
+    const table = GENERIC_DROPS[tier] || [];
+    const arr = table.filter(d => d.item !== "金币");
+    dropsHtml = arr.length ? `<div class="drop-group">
+      <div class="drop-group-label">通用掉落 <span class="drop-tier-tag">${GENERIC_TIER_INFO[tier].label}</span> <span class="drop-count">${arr.length}</span></div>
+      <div class="stat-grid">${arr.map(d => {
+        const it = ITEMS[d.item];
+        const typeTag = it ? `<span class="type-tag ${it.type}">${TYPE_NAMES[it.type]||it.type}</span>` : "";
+        return `<div class="stat-item" title="${itemTooltip(d.item)}">${typeTag}<span class="drop-badge gen">通用</span> <span class="val">${d.item}</span> <span class="lbl">1/${d.chance}</span></div>`;
+      }).join("")}</div></div>` : '<div style="color:#666">无掉落</div>';
   }
-  const dropsHtml = (Array.isArray(drops) ? drops : []).filter(d => d.item !== "金币").slice(0, 20).map(d => {
-    const it = ITEMS[d.item];
-    const typeTag = it ? `<span class="type-tag ${it.type}">${TYPE_NAMES[it.type]||it.type}</span>` : "";
-    return `<div class="stat-item" title="${itemTooltip(d.item)}">${typeTag} <span class="val">${d.item}</span> <span class="lbl">1/${d.chance}</span></div>`;
-  }).join("") || '<div style="color:#666">无掉落</div>';
   // 地图
   const mapsHtml = maps.length ? maps.map(x => `<div class="stat-item"><span class="val">${x.name}</span> <span class="lbl">L${x.levelReq}${x.continent===2?" 二大陆":""} ×${x.count}</span></div>`).join("") : '<div style="color:#666">无地图记录</div>';
   return `<div class="db-detail-content">
     <div class="db-detail-section"><h4>⚔️ 怪物技能</h4><div class="stat-grid">${skillsHtml}</div></div>
-    <div class="db-detail-section"><h4>📦 掉落物品（前20）</h4><div class="stat-grid">${dropsHtml}</div></div>
+    <div class="db-detail-section"><h4>📦 掉落物品</h4>${dropsHtml}</div>
     <div class="db-detail-section"><h4>📍 所在地图</h4><div class="stat-grid">${mapsHtml}</div></div>
   </div>`;
 }
@@ -886,6 +920,8 @@ function renderMonDetail(name, m, maps) {
 function toggleMon(name) { dbExpandedMon = dbExpandedMon === name ? null : name; renderMonsters(); }
 
 // === 地区图鉴 ===
+// 收起的地图名集合（默认全部展开）
+let dbCollapsedRegions = new Set();
 // 通用掉落分档标签（与 getDropTable 一致：level<=20 low, 21-40 mid, >40 high）
 const GENERIC_TIER_INFO = {
   low:  { label: "低档 (怪物等级 ≤ 20)", color: "#a5d6a7" },
@@ -932,13 +968,15 @@ function resolveDropTable(name) {
   return null;
 }
 
-// 单个掉落条目渲染（复用于专属掉落）
+// 单个掉落条目渲染（复用于专属掉落；标注通用/独特）
 function renderDropEntry(d) {
   const it = ITEMS[d.item];
   const tip = itemTooltip(d.item);
   const typeTag = it ? `<span class="type-tag ${it.type}">${TYPE_NAMES[it.type]||it.type}</span>` : "";
   const cntTag = d.count ? ` ×${d.count}` : "";
-  return `<span class="region-drop-item" title="${tip}">${typeTag}<b>${d.item}</b><span class="prob">1/${d.chance}</span>${cntTag}</span>`;
+  const isGen = getGenericItemSet().has(d.item);
+  const badge = `<span class="region-drop-badge ${isGen?"gen":"uniq"}">${isGen?"通":"独"}</span>`;
+  return `<span class="region-drop-item ${isGen?"is-gen":"is-uniq"}" title="${tip}">${badge}${typeTag}<b>${d.item}</b><span class="prob">1/${d.chance}</span>${cntTag}</span>`;
 }
 
 // 渲染单张地图卡片（全部展开，不折叠）
@@ -947,7 +985,7 @@ function renderRegionCard(map) {
   const c2tag = continent === 2 ? ' <span class="c2">[二大陆]</span>' : "";
   const totalWeight = map.monsters.reduce((s, m) => s + m.count, 0);
 
-  const monsHtml = map.monsters.map(entry => {
+  const monsParts = map.monsters.map(entry => {
     const mon = MONSTERS[entry.name];
     if (!mon) return ""; // 悬挂引用跳过
     const pct = entry.count / totalWeight * 100;
@@ -973,15 +1011,46 @@ function renderRegionCard(map) {
       </div>
       ${dropsHtml}
     </div>`;
-  }).join("");
+  });
+  const monsHtml = monsParts.join("");
+  const monCount = map.monsters.length;
 
-  return `<div class="region-card">
-    <div class="region-card-header">
+  const isCollapsed = dbCollapsedRegions.has(map.name);
+  const toggleIcon = isCollapsed ? "▶" : "▼";
+  const monsBlock = isCollapsed ? "" : `<div class="region-mons">${monsHtml}</div>`;
+  return `<div class="region-card${isCollapsed?" collapsed":""}">
+    <div class="region-card-header" onclick="toggleRegion('${map.name.replace(/'/g,"\\'")}')" title="点击展开/收起">
+      <span class="region-toggle">${toggleIcon}</span>
       <b>${map.name}</b>${c2tag}
+      <span class="region-card-summary">${monCount}种怪物</span>
       <span class="region-card-lv">要求 Lv${map.levelReq}</span>
     </div>
-    <div class="region-mons">${monsHtml}</div>
+    ${monsBlock}
   </div>`;
+}
+
+function toggleRegion(name) {
+  if (dbCollapsedRegions.has(name)) dbCollapsedRegions.delete(name);
+  else dbCollapsedRegions.add(name);
+  renderRegions();
+}
+// 展开/收起当前筛选结果里的全部地图
+function expandAllRegions() { dbCollapsedRegions.clear(); renderRegions(); }
+function collapseAllRegions() {
+  // 复用 renderRegions 的筛选逻辑得到当前可见地图名
+  const cont = document.getElementById("region-filter-cont").value;
+  const kw = document.getElementById("region-filter-kw").value.trim().toLowerCase();
+  for (const m of MAPS) {
+    const mc = m.continent || 1;
+    if (cont && mc != cont) continue;
+    if (kw) {
+      const inName = m.name.toLowerCase().includes(kw);
+      const inMon = m.monsters.some(e => e.name.toLowerCase().includes(kw));
+      if (!inName && !inMon) continue;
+    }
+    dbCollapsedRegions.add(m.name);
+  }
+  renderRegions();
 }
 
 function renderRegions() {
