@@ -5482,7 +5482,7 @@ function recommendEquip(job, tierLv) {
 // - AOE 技能 damageBonus 累加，法师全额溅射每只怪、0蓝耗 → 法师优先堆 AOE
 // - 单体 attack 技能每个耗 2MP/回合，只打主目标
 // - buff 减伤累加（上限85%）：法师魔法盾0.30+分身0.40=0.70，脆皮法师必上双减伤
-function recommendSkills(job, tierLv, slots) {
+function recommendSkills(job, tierLv, slots, stats) {
   const available = Object.entries(SKILLS).filter(([n, s]) => s.job === job && s.levelReq <= tierLv);
   // 分类并按 damageBonus 降序
   const aoeAttacks = available.filter(([n, s]) => s.type === "attack" && s.aoe).sort((a, b) => b[1].damageBonus - a[1].damageBonus);
@@ -5509,20 +5509,25 @@ function recommendSkills(job, tierLv, slots) {
     for (const e of aoeAttacks) { if (full()) break; push(e, "AOE输出"); }
     for (const e of singleAttacks) { if (full()) break; push(e, "单体输出"); }
   } else if (job === "taoist") {
-    // 道士：召唤技能全带(每个技能1只宝宝,共存且全部群攻全场,伤害累加) → 隐身术(配合召唤近乎无敌)
-    //   → 减伤buff(阴阳盾) → 施毒术 → 单体/被动
-    // 数据验证: 3召唤(Σbonus1.6)清波2335 > 1召唤+2AOE的2131, 召唤群攻不扣防且0蓝耗
+    // 道士：召唤技能全带(每个1只宝宝,共存且全部群攻全场) → 隐身术(配合召唤近乎无敌)
+    // 阴阳盾阈值：SC≥20时宝宝总HP≥980,每回合净承伤~98,撑10+回合(清波仅2-4回合)
+    //   隐身100%覆盖→怪物全打宝宝→玩家不挨打→阴阳盾(玩家减伤)无用,省下槽位装输出
+    //   SC<20时宝宝脆易死→隐身漏→玩家挨打→需要阴阳盾保命
+    const scVal = stats ? stats.maxSc : 0;
+    const petStrongEnough = scVal >= 20;
     for (const e of summons) { if (full()) break; push(e, "召唤群攻"); }
     // 隐身术：delay=6触发6回合隐身=100%覆盖率，怪物强制打宝宝（需有召唤物），近乎无敌
     const stealth = available.find(e => e[0] === "隐身术" || e[0] === "集体隐身术");
     if (stealth && summons.length > 0 && !full()) push(stealth, "隐身无敌");
-    // 减伤 buff（阴阳盾等，隐身术 damageBonus=0 已单独处理）
-    const defBuff = buffs.find(e => e[1].damageBonus > 0);
-    if (defBuff && !full()) push(defBuff, "减伤" + Math.round(defBuff[1].damageBonus * 100) + "%");
+    // 阴阳盾：仅在宝宝不够硬(SC<20)时带；SC≥20隐身全覆盖,省槽装输出
+    if (!petStrongEnough) {
+      const defBuff = buffs.find(e => e[1].damageBonus > 0);
+      if (defBuff && !full()) push(defBuff, "减伤" + Math.round(defBuff[1].damageBonus * 100) + "%");
+    }
     // 施毒术（道士核心 DOT，独立通道）
     const poison = singleAttacks.find(e => e[0] === "施毒术");
     if (poison && !full()) push(poison, "持续毒伤");
-    // AOE DOT（瘟疫/毒云，若还有空槽）
+    // AOE DOT（瘟疫/毒云）
     for (const e of aoeAttacks) { if (full()) break; push(e, "AOE输出"); }
     if (singleAttacks.length > 0 && !full()) {
       const main = singleAttacks.find(e => e[0] !== "施毒术") || singleAttacks[0];
@@ -5560,12 +5565,24 @@ function renderRecommend() {
   const job = recommendJob;
   const hint = document.getElementById("recommend-hint");
   const mainStatName = { warrior: "物攻(DC)", mage: "魔法(MC)", taoist: "道术(SC)" }[job];
-  hint.textContent = `${JOB_NAMES_FULL[job]} 推荐配装 · 主属性：${mainStatName} · 装备按主属性上限自动选取 · 技能按伤害/效用自动搭配`;
+  let hintExtra = "";
+  if (job === "taoist") {
+    hintExtra = " · 阴阳盾阈值：SC≥20时宝宝够硬(总HP≥980撑10+回合)，隐身100%覆盖怪物全打宝宝，不带阴阳盾省槽装输出；SC<20宝宝脆易死需阴阳盾保命";
+  } else if (job === "mage") {
+    hintExtra = " · 减伤buff优先(魔法盾+分身术叠加70%减伤) · AOE不耗蓝打全场，单体耗蓝只打主目标故不推荐";
+  }
+  hint.textContent = `${JOB_NAMES_FULL[job]} 推荐配装 · 主属性：${mainStatName}` + hintExtra;
 
   const body = document.getElementById("recommend-body");
   body.innerHTML = RECOMMEND_TIERS.map(tier => {
     const equips = recommendEquip(job, tier.lv);
-    const skills = recommendSkills(job, tier.lv, tier.slots);
+    // 用推荐装备组装 player 算实际面板属性（道士需 SC 判断阴阳盾阈值）
+    const equipObj = {};
+    for (const { slot, picks } of equips) {
+      if (picks[0]) equipObj[slot.type] = { name: picks[0].name };
+    }
+    const tierStats = getStats({ job, level: tier.lv, equipment: equipObj });
+    const skills = recommendSkills(job, tier.lv, tier.slots, tierStats);
 
     // 装备列表
     const equipHtml = equips.map(({ slot, picks }) => {
