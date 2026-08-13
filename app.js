@@ -55,111 +55,121 @@ function getStats(player) {
   return s;
 }
 
-// ---------- 每回合伤害分项（用于按每只怪单独扣防）----------
-// 返回 { physBase, magicBase, summonPerTurn, poisonPerTurn, aoeMagicBase }
-// - physBase: 物攻段基础值（扣怪物物防）
-// - magicBase: 魔法段基础值（扣怪物魔防）
-// - summonPerTurn / poisonPerTurn: 召唤/毒伤害（不扣防，固定值）
-// - aoeMagicBase: AOE溅射基础（对其他怪，扣各自魔防）
-function getDamageParts(player, stats, waveSize) {
-  const baseDmg = Math.max(1, (stats.minAtk + stats.maxAtk) / 2);
-  let summonBonusSum = 0, poisonBonus = 0, avgTriggered = 0;
-  for (const sk of player.equippedSkills || []) {
-    const sd = SKILLS[sk]; if (!sd) continue;
-    if (sd.type === "summon") { summonBonusSum += sd.damageBonus; continue; }
-    if (sd.type === "attack" && (sk === "施毒术" || sk === "瘟疫" || sk === "毒云")) { poisonBonus += sd.damageBonus; continue; }
-    if (sd.delay > 0) avgTriggered += sd.damageBonus / sd.delay;
+// ---------- 每回合伤害分项（波次模型：分离「单点流」与「AOE流」）----------
+// 单点流（扣该怪防，仅主目标承受）：物理段 + 魔法段 + 施毒术DOT(只主目标) + 特殊(火焰/连击)
+// AOE流（每只存活怪都承受，不扣防）：AOE溅射 + 召唤群攻 + 瘟疫/毒云DOT
+// 严格复刻 game.js：AOE溅射法/道不扣防、召唤/毒不扣防；战士溅射=主物伤×aoeBonus×0.5
+function getDamageParts(player, stats) {
+  const equipped = player.equippedSkills || [];
+  const job = player.job;
+  const baseDmg = Math.max(1, (stats.minAtk + stats.maxAtk) / 2); // 期望物攻（防御在 singleDmgToMon 内逐怪扣）
+  const scBase = stats.maxSc > 0 ? stats.maxSc : stats.maxAtk;
+
+  // === delay>0 触发型技能：平均每回合贡献（法/道魔法段含「召唤/治疗也放大魔法段」quirk）===
+  let avgTriggered = 0, stealthDelay = 0;
+  for (const sk of equipped) {
+    const sd = SKILLS[sk]; if (!sd || !sd.delay) continue;
+    avgTriggered += sd.damageBonus / sd.delay; // 平均每回合
+    if (sk === "隐身术" || sk === "集体隐身术") stealthDelay = sd.delay;
   }
 
-  let physBase = 0, magicBase = 0;
-  if (player.job === "warrior") {
-    let passive = 0;
-    for (const sk of player.equippedSkills || []) {
+  // === AOE 技能加成总和（被动 delay=0 + 触发 delay>0）===
+  let aoeBonus = 0, summonBonusSum = 0;
+  for (const sk of equipped) {
+    const sd = SKILLS[sk]; if (!sd) continue;
+    if (sd.aoe && sd.damageBonus) aoeBonus += sd.damageBonus;
+    if (sd.type === "summon") summonBonusSum += sd.damageBonus;
+  }
+
+  // --- 单点流基础值 ---
+  let physSingleBase = 0, magicSingleBase = 0, warriorMult = 1, normalPassive = 0, magicBonus = 0;
+  if (job === "warrior") {
+    let passive = 0; // delay=0 非buff技能全部叠加到物攻
+    for (const sk of equipped) {
       const sd = SKILLS[sk];
-      if (sd && (!sd.delay || sd.delay === 0) && sd.type !== "buff") passive += sd.damageBonus;
+      if (sd && !sd.delay && sd.type !== "buff") passive += sd.damageBonus;
     }
-    physBase = baseDmg * (1 + passive) + baseDmg * avgTriggered; // 战士物攻+触发都走物防
-    magicBase = 0;
+    warriorMult = 1 + passive + avgTriggered;
+    physSingleBase = baseDmg;
   } else {
-    // 法师/道士
-    let residentMagic = 0;
-    for (const sk of player.equippedSkills || []) {
+    // 法/道：utility类被动进物攻段
+    for (const sk of equipped) {
       const sd = SKILLS[sk];
-      if (sd && sd.type === "attack" && (!sd.delay || sd.delay === 0) && !sd.aoe
-          && sk !== "施毒术" && sk !== "瘟疫" && sk !== "毒云") residentMagic += sd.damageBonus;
-    }
-    let normalPassive = 0;
-    for (const sk of player.equippedSkills || []) {
-      const sd = SKILLS[sk];
-      if (sd && (!sd.delay || sd.delay === 0) && sd.type !== "buff" && sd.type !== "attack" && sd.type !== "summon" && sd.type !== "passive")
+      if (sd && !sd.delay && sd.type !== "buff" && sd.type !== "attack" && sd.type !== "summon" && sd.type !== "passive")
         normalPassive += sd.damageBonus;
     }
-    physBase = baseDmg * (1 + normalPassive);
-    const mcBase = player.job === "mage" ? stats.maxMc : stats.maxSc;
-    let passiveMagic = 0;
-    for (const sk of player.equippedSkills || []) {
+    physSingleBase = baseDmg * (1 + normalPassive);
+    const mcBase = job === "mage" ? stats.maxMc : stats.maxSc;
+    let residentMagic = 0; // delay=0 单体攻击技能(非aoe非毒)，各耗2MP
+    for (const sk of equipped) {
       const sd = SKILLS[sk];
-      if (sd && sd.type === "passive" && (!sd.delay || sd.delay === 0)) passiveMagic += sd.damageBonus;
+      if (sd && sd.type === "attack" && !sd.delay && !sd.aoe
+          && sk !== "施毒术" && sk !== "瘟疫" && sk !== "毒云") residentMagic += sd.damageBonus;
     }
-    const magicBonus = avgTriggered + residentMagic + passiveMagic;
-    magicBase = mcBase * (1 + magicBonus);
+    let passiveMagic = 0; // delay=0 passive（精神力战法等）
+    for (const sk of equipped) {
+      const sd = SKILLS[sk];
+      if (sd && sd.type === "passive" && !sd.delay) passiveMagic += sd.damageBonus;
+    }
+    magicBonus = avgTriggered + residentMagic + passiveMagic;
+    magicSingleBase = mcBase * (1 + magicBonus);
   }
 
-  // AOE 溅射基础值（对其他怪，扣各自魔防）
-  let aoeMagicBase = 0;
-  if (waveSize > 1) {
-    let spt = 0, hasTao = false;
-    for (const sk of player.equippedSkills || []) {
-      const sd = SKILLS[sk];
-      if (!sd || sd.type !== "attack" || !sd.aoe || !sd.damageBonus) continue;
-      const freq = sd.delay > 0 ? 1 / sd.delay : 1;
-      if (player.job === "warrior") {
-        spt += freq * baseDmg * sd.damageBonus * 0.5; // 简化：战士AOE走物防
-      } else {
-        const sb = player.job === "mage" ? stats.maxMc : stats.maxSc;
-        spt += freq * sb * sd.damageBonus * (player.job === "mage" ? 1.0 : 0.5);
-        if (player.job === "taoist") hasTao = true;
-      }
-    }
-    if (hasTao) spt += stats.maxSc * 0.5;
-    aoeMagicBase = spt * waveSize; // 溅射总量基础（主目标+其他怪各扣各自魔防）
+  // --- AOE流溅射（每只怪，不扣防；战士在 aoeDmgToMon 内基于单点物伤算）---
+  let aoeSplashPerMon = 0;
+  if (aoeBonus > 0) {
+    if (job === "mage") aoeSplashPerMon = Math.max(1, Math.floor(stats.maxMc * aoeBonus));          // 法师全额
+    else if (job === "taoist") aoeSplashPerMon = Math.max(1, Math.floor(stats.maxSc * (1 + aoeBonus) * 0.5)); // 道士SC×(1+aoeBonus)×0.5
+    // 战士 aoeSplashPerMon 保持0，由 aoeDmgToMon 逐怪计算
   }
+  // 召唤群攻（每只怪每回合承受所有宝宝各1份，不扣防）
+  const summonPerMon = summonBonusSum > 0 ? Math.max(1, Math.floor(scBase * summonBonusSum * 2.0)) : 0;
+  // 毒DOT（不扣防）：施毒术只主目标；瘟疫/毒云每只
+  let poisonSingle = 0, poisonAoEPerMon = 0;
+  if (equipped.includes("施毒术")) poisonSingle = Math.max(1, Math.floor(scBase * 0.20 * 0.6));     // SC×0.12
+  if (equipped.includes("瘟疫")) poisonAoEPerMon += Math.max(1, Math.floor(scBase * 0.55 * 0.6));   // SC×0.33
+  if (equipped.includes("毒云")) poisonAoEPerMon += Math.max(1, Math.floor(scBase * 0.40 * 0.6));   // SC×0.24
 
-  // 召唤宝宝（固定伤害，不扣防——游戏里宝宝攻击独立结算）
-  let summonPerTurn = 0;
-  if (summonBonusSum > 0) {
-    const scBase = stats.maxSc > 0 ? stats.maxSc : stats.maxAtk;
-    summonPerTurn = Math.max(1, Math.floor(scBase * summonBonusSum * 2.0));
-    if (waveSize > 1) summonPerTurn += Math.floor(scBase * summonBonusSum * 2.0) * (waveSize - 1);
-  }
-  // 毒（固定伤害）
-  let poisonPerTurn = 0;
-  if (poisonBonus > 0) {
-    const scBase = stats.maxSc > 0 ? stats.maxSc : stats.maxAtk;
-    poisonPerTurn = Math.max(1, Math.floor(scBase * poisonBonus * 0.6));
-  }
-  // 特殊装备
-  let specialPerTurn = 0;
+  // --- 特殊装备（主目标）---
+  let specialSingle = 0;
   const rings = getSpecialRings(player);
-  if (rings.includes("火焰")) specialPerTurn += Math.max(1, Math.floor(stats.maxAtk * 0.3));
-  if (rings.includes("连击")) specialPerTurn += physBase * 0.25;
+  if (rings.includes("火焰")) specialSingle += Math.max(1, Math.floor(stats.maxAtk * 0.3));
+  if (rings.includes("连击")) specialSingle += baseDmg * 0.25; // 25%概率追击一次物攻
 
-  return { physBase, magicBase, summonPerTurn, poisonPerTurn, specialPerTurn, aoeMagicBase };
+  // --- 承伤分摊：召唤宝宝 / 隐身术 ---
+  const hasMinion = summonBonusSum > 0 || rings.includes("记忆") || equipped.includes("诱惑之光");
+  // 隐身覆盖率：触发后6回合隐身，delay周期触发 → min(1, 6/delay)；隐身需有宝宝承接仇恨
+  const stealthUptime = (stealthDelay > 0 && hasMinion) ? Math.min(1, 6 / stealthDelay) : 0;
+
+  return { job, physSingleBase, warriorMult, normalPassive, magicSingleBase, magicBonus,
+           aoeBonus, aoeSplashPerMon, summonPerMon, poisonAoEPerMon, poisonSingle, specialSingle,
+           hasMinion, stealthUptime };
 }
 
-// 对单只怪计算每回合实际伤害（扣该怪自身物防/魔防）
-function dmgToMonster(parts, mon) {
-  const phys = Math.max(1, parts.physBase - (mon.minDef || 0) * 0.6);
-  const magic = Math.max(1, parts.magicBase - (mon.minMagDef || 0) * 0.6);
-  // AOE溅射：对该怪扣它自己的魔防
-  const aoe = parts.aoeMagicBase > 0 ? Math.max(1, parts.aoeMagicBase - (mon.minMagDef || 0) * 0.6) : 0;
-  return Math.max(1, Math.floor(phys + magic + aoe + parts.summonPerTurn + parts.poisonPerTurn + parts.specialPerTurn));
+// 单点流对单只怪的每回合伤害（扣该怪自身物防/魔防；毒/特殊不扣防）——仅主目标承受
+function singleDmgToMon(parts, mon) {
+  const physFinal = parts.job === "warrior" ? parts.physSingleBase * parts.warriorMult : parts.physSingleBase;
+  const phys = Math.max(1, physFinal - (mon.minDef || 0) * 0.6);
+  const magic = parts.magicSingleBase > 0 ? Math.max(1, parts.magicSingleBase - (mon.minMagDef || 0) * 0.6) : 0;
+  return Math.max(1, Math.floor(phys + magic + parts.poisonSingle + parts.specialSingle));
 }
 
-// 兼容旧接口：getDPS 返回打0防怪的总值（用于玩家卡片展示）
-function getDPS(player, stats, waveSize) {
-  const parts = getDamageParts(player, stats, waveSize);
-  return Math.max(1, Math.floor(parts.physBase + parts.magicBase + parts.aoeMagicBase + parts.summonPerTurn + parts.poisonPerTurn + parts.specialPerTurn));
+// AOE流对单只怪的每回合伤害（每只存活怪都承受；法/道溅射不扣防，战士=该怪单点物伤×aoeBonus×0.5；召唤/毒不扣防）
+function aoeDmgToMon(parts, mon) {
+  let splash = parts.aoeSplashPerMon;
+  if (parts.job === "warrior" && parts.aoeBonus > 0) {
+    const physFinal = parts.physSingleBase * parts.warriorMult;
+    const phys = Math.max(1, physFinal - (mon.minDef || 0) * 0.6);
+    splash = Math.max(1, Math.floor(phys * parts.aoeBonus * 0.5));
+  }
+  return Math.floor(splash + parts.summonPerMon + parts.poisonAoEPerMon);
+}
+
+// 兼容展示：主目标打0防怪时每回合承受的总量（单点流 + AOE流份），用于玩家卡片
+function getDPS(player, stats) {
+  const parts = getDamageParts(player, stats);
+  const dummy = { minDef: 0, minMagDef: 0 };
+  return Math.max(1, Math.floor(singleDmgToMon(parts, dummy) + aoeDmgToMon(parts, dummy)));
 }
 
 function getSpecialRings(player) {
@@ -234,84 +244,82 @@ function rollDropExpect(monName, monLevel) {
   return { gold, hpPot, mpPot, hpHeal, mpHeal, items };
 }
 
-// ---------- 主计算：单张地图收益（对每只怪单独算，最后加权）----------
+// ---------- 主计算：单张地图收益（波次模型）----------
+// 波次 N=10 只同场：单点流(DS)只削主目标1只，AOE流(DA)每回合削全部 N 只
+// 清波回合 T = N×H / (DS + N×DA)；每分钟击杀 = 60×(DS + N×DA)/H×0.95
 function calcMap(map, player, stats, _dps, mpPerTurn, parts) {
+  const N = WAVE_SIZE;
   const totalWeight = map.monsters.reduce((s, m) => s + m.count, 0);
   const buffDefBonus = getBuffDefBonus(player);
   const allDrops = {};
   let dangerCount = 0, dangerMonsters = [];
 
-  // 逐怪计算：每只怪的击杀回合、经验、金币、承伤 → 再按 count 加权
-  // 关键：伤害用 dmgToMonster(parts, mon) 扣该怪自己的物防/魔防
-  let wExpPerKill = 0, wGoldPerKill = 0, wTurnsPerKill = 0;
+  let wHP = 0, wExp = 0, wGold = 0, wSingle = 0, wAoe = 0;
   let wDmgToPlayer = 0, wHpPotPerKill = 0, wMpPotPerKill = 0;
-  let wHpHealPerKill = 0, wMpHealPerKill = 0; // 逐怪按各自掉落档的回血/回蓝量
-  let wSurvive = 0;
+  let wHpHealPerKill = 0, wMpHealPerKill = 0, wSurvive = 0;
 
   for (const entry of map.monsters) {
     const mon = MONSTERS[entry.name];
     if (!mon) continue;
     const w = entry.count / totalWeight;
-    // 该怪每回合受到的真实伤害（扣该怪自身防/魔防）
-    const dmgPerTurn = dmgToMonster(parts, mon);
-    const turns = Math.max(1, Math.ceil(mon.hp / dmgPerTurn)); // 击杀回合（离散，与游戏一致）
-    // 该怪每回合打玩家多少
-    const dmgToPlayerRaw = avgDamage(mon.minAtk, mon.maxAtk, stats.minDef, stats.maxDef);
-    const dmgToPlayer = Math.max(1, Math.floor(dmgToPlayerRaw * (1 - buffDefBonus)));
-    const survive = Math.floor(stats.maxHp / dmgToPlayer);
+    const single = singleDmgToMon(parts, mon); // 主目标单点流（扣该怪自身防/魔防）
+    const aoe = aoeDmgToMon(parts, mon);       // 每只AOE流（法/道溅射不扣防、召唤/毒不扣防）
+    wHP += mon.hp * w;
+    wExp += mon.exp * w;
+    wSingle += single * w;
+    wAoe += aoe * w;
     // 掉落
     const r = rollDropExpect(entry.name, mon.level);
+    wGold += r.gold * w;
     for (const it of r.items) {
       const k = it.name;
       if (!allDrops[k]) allDrops[k] = { name: k, chance: it.chance, info: it.info, sources: [] };
       if (allDrops[k].sources.length < 3 && !allDrops[k].sources.includes(entry.name))
         allDrops[k].sources.push(entry.name);
     }
-    // 危险判定：以"扛不住"为准（survive<5），等级差仅作参考
-    // 只看等级会导致L25僵尸这种"等级略高但实际扛得住"的怪被误判
-    const tooStrong = survive < 5;
-    if (tooStrong) {
+    // 承伤（单怪瞬时，用于扛几击/危险判定）
+    const dmgToPlayerRaw = avgDamage(mon.minAtk, mon.maxAtk, stats.minDef, stats.maxDef);
+    const dmgToPlayer = Math.max(1, Math.floor(dmgToPlayerRaw * (1 - buffDefBonus)));
+    const survive = Math.floor(stats.maxHp / dmgToPlayer);
+    wDmgToPlayer += dmgToPlayer * w;
+    wHpPotPerKill += r.hpPot * w; wMpPotPerKill += r.mpPot * w;
+    wHpHealPerKill += r.hpHeal * w; wMpHealPerKill += r.mpHeal * w;
+    wSurvive += survive * w;
+    if (survive < 5) {
       dangerCount += entry.count;
       dangerMonsters.push({ name: entry.name, lv: mon.level, dmg: Math.round(dmgToPlayer), survive, count: entry.count });
     }
-    // 加权累加（按只数权重）
-    wExpPerKill += mon.exp * w;
-    wGoldPerKill += r.gold * w;
-    wTurnsPerKill += turns * w;
-    wDmgToPlayer += dmgToPlayer * w;
-    wHpPotPerKill += r.hpPot * w;
-    wMpPotPerKill += r.mpPot * w;
-    wHpHealPerKill += r.hpHeal * w; // 该怪按自己掉落档的回血量
-    wMpHealPerKill += r.mpHeal * w;
-    wSurvive += survive * w;
   }
 
-  // 每分钟击杀：60秒 ÷ 加权平均击杀回合（每秒1回合）
-  // 实战损耗系数 0.95：波次切换空转/save开销等（实测校准：尸王殿理论8.6杀/分，实测8.2杀/分）
+  const H = wHP, DS = wSingle, DA = wAoe;
   const COMBAT_EFFICIENCY = 0.95;
-  const killsPerMin = Math.min(60, (60 / wTurnsPerKill) * COMBAT_EFFICIENCY);
-  const turnsPerMin = killsPerMin * wTurnsPerKill; // 每分钟总回合数
+  // 波次清场：每分钟击杀 = 60×(DS + N×DA)/H×0.95
+  const clearRate = DS + N * DA; // 每回合有效清场速度
+  const killsPerMin = clearRate > 0 ? Math.min(60, 60 * clearRate / H * COMBAT_EFFICIENCY) : 0;
+  const turnsPerMin = 60 * COMBAT_EFFICIENCY; // 每分钟战斗回合数（1回合/秒×损耗）
+  const hitsToKill = (DS + DA) > 0 ? H / (DS + DA) : 999; // 主目标击杀回合（代表性）
 
-  // 经验/金币
-  const expPerMin = Math.round(wExpPerKill * killsPerMin);
-  const goldPerMin = Math.round(wGoldPerKill * killsPerMin);
+  const expPerMin = Math.round(wExp * killsPerMin);
+  const goldPerMin = Math.round(wGold * killsPerMin);
 
-  // 蓝药：用 wMpHealPerKill（每只怪按各自掉落档的回蓝量，精确计算）
+  // 蓝药
   const mpCostPerMin = mpPerTurn * turnsPerMin;
-  const mpPotPerMin = wMpPotPerKill * killsPerMin; // 瓶数（展示用）
-  const freeMpPerMin = wMpHealPerKill * killsPerMin; // 白嫖回蓝总量
+  const mpPotPerMin = wMpPotPerKill * killsPerMin;
+  const freeMpPerMin = wMpHealPerKill * killsPerMin;
   const mpCost = Math.max(0, mpCostPerMin - freeMpPerMin) * (50 / 30);
 
-  // 红药：用 wHpHealPerKill（每只怪按各自掉落档的回血量，精确计算）
-  const hpTakenPerMin = wDmgToPlayer * turnsPerMin;
-  const hpPotPerMin = wHpPotPerKill * killsPerMin; // 瓶数（展示用）
-  const freeHpPerMin = wHpHealPerKill * killsPerMin; // 白嫖回血总量
+  // 红药：每回合承伤 = 平均存活(N/2) × 单怪伤害 × 分摊率（宝宝40%挡 / 隐身100%挡）
+  const shareRate = parts.hasMinion ? (1 - parts.stealthUptime) * 0.6 : 1.0;
+  const dmgPerTurn = (N / 2) * wDmgToPlayer * shareRate;
+  const hpTakenPerMin = dmgPerTurn * turnsPerMin;
+  const hpPotPerMin = wHpPotPerKill * killsPerMin;
+  const freeHpPerMin = wHpHealPerKill * killsPerMin;
   const hpCost = Math.max(0, hpTakenPerMin - freeHpPerMin) * (50 / 30);
 
   const netGold = Math.round(goldPerMin - mpCost - hpCost);
   const safety = Math.max(0, Math.round(100 - (dangerCount / totalWeight) * 100));
-  // 可行性：加权扛几击 ≥ 加权击杀回合×1.2，且安全度≥40
-  const practical = wSurvive >= wTurnsPerKill * 1.2 && safety >= 40;
+  // 可行性：扛几击 ≥ 主目标击杀回合×1.2，且安全度≥40
+  const practical = wSurvive >= hitsToKill * 1.2 && safety >= 40;
 
   const dropSummary = Object.values(allDrops)
     .filter(d => {
@@ -325,7 +333,7 @@ function calcMap(map, player, stats, _dps, mpPerTurn, parts) {
 
   return {
     map, expPerMin, goldPerMin, netGold, killsPerMin: Math.round(killsPerMin * 10) / 10,
-    hitsToKill: Math.round(wTurnsPerKill * 10) / 10, safety, dangerMonsters,
+    hitsToKill: Math.round(hitsToKill * 10) / 10, safety, dangerMonsters,
     mpCostPerMin: Math.round(mpCostPerMin), freeMpPot: Math.round(mpPotPerMin * 10) / 10,
     hpTakenPerMin: Math.round(hpTakenPerMin), hpCost: Math.round(hpCost),
     allDrops: Object.values(allDrops).sort((a, b) => a.chance - b.chance), dropSummary,
@@ -393,8 +401,8 @@ function loadAndCalc() {
   if (!player.equipment) player.equipment = {};
 
   const stats = getStats(player);
-  const parts = getDamageParts(player, stats, WAVE_SIZE);
-  const dps = getDPS(player, stats, WAVE_SIZE);
+  const parts = getDamageParts(player, stats);
+  const dps = getDPS(player, stats);
   const { perTurn: mpPerTurn, singleAtkSkills } = getMpCostPerTurn(player);
 
   renderPlayer(player, stats, dps, mpPerTurn, singleAtkSkills);
