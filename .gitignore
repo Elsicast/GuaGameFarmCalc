@@ -37,3 +37,6 @@ wuma.js
 Thumbs.db
 .idea/
 .vscode/
+
+# ZCode 会话目录
+.zcode/
