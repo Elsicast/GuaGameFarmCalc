@@ -565,7 +565,9 @@ function simulateMap(map, player, stats, parts, opts) {
     for (const sk of residentSkills) { if (mp >= 2) { mp -= 2; residentBonus += SKILLS[sk].damageBonus; } }
 
     let dmg = rollDmg(stats.minAtk, stats.maxAtk, mon.minDef, mon.maxDef);
-    dmg = Math.floor(dmg * (1 + normalPassive));
+    // 战士:普攻乘完整技能乘区(warriorMult, 所有delay=0非buff技能加成); 法/道只乘utility类被动
+    const physMult = player.job === "warrior" ? parts.warriorMult : (1 + normalPassive);
+    dmg = Math.floor(dmg * physMult);
     const magicBonus = triggeredBonus + residentBonus + passiveMagic;
     if (magicBonus > 0 && magicBase > 0) {
       const mMin = Math.floor(magicBase * (1 + magicBonus) * 0.9);
