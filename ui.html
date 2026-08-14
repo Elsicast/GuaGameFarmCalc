@@ -25,6 +25,15 @@
         <option value="10" selected>10只</option>
       </select>
     </label>
+    <label style="display:flex;align-items:center;gap:4px;font-size:13px;color:#b0bec5" title="游戏内「自动喝药」的HP阈值设置。必须与游戏内一致，否则模拟死亡/时严重失真（原版默认70%）">HP喝药阈值
+      <select id="sim-hp-threshold" onchange="loadAndCalc()">
+        <option value="0.7" selected>70%(默认)</option>
+        <option value="0.5">50%</option>
+        <option value="0.4">40%</option>
+        <option value="0.3">30%</option>
+        <option value="0.15">15%</option>
+      </select>
+    </label>
   </div>
   <div id="error-msg" class="error"></div>
 </div>

@@ -382,6 +382,238 @@ function getBuffDefBonus(player) {
   return Math.min(0.85, b); // 上限保护
 }
 
+/* ===================================================================
+ * 蒙特卡洛战斗模拟 —— 逐回合复刻原版 game.js 战斗循环
+ * （参考 docs/reference/origin-game.js，2026-08 抓取自 guagame.com）
+ *
+ * 与解析式 calcMap 的区别：伤害逐次 roll（攻/防独立均匀随机）、
+ * 波次首回合全怪齐射、一回合只喝一瓶药、怪物技能/麻痹/毒/召唤
+ * 全部真实结算、死亡清波重来并损失1%金币。
+ * 输出真实的 死亡/小时 与受死亡拖累后的实际收益。
+ * =================================================================== */
+const SIM_DEFAULT_TURNS = 3000; // 模拟回合数（1回合=1秒，3000回合≈50分钟游戏时间）
+const SIM_HP_THRESHOLD = 0.7;   // 原版默认：HP<70% 自动喝红药
+const SIM_MP_THRESHOLD = 0.3;   // 原版默认：MP<30% 自动喝蓝药
+
+function simulateMap(map, player, stats, parts, opts) {
+  opts = opts || {};
+  const N = opts.waveSize || getWaveSize();
+  const TURNS = opts.turns || SIM_DEFAULT_TURNS;
+  const HP_TH = opts.hpThreshold || SIM_HP_THRESHOLD;
+  const MP_TH = opts.mpThreshold || SIM_MP_THRESHOLD;
+  const rng = opts.rng || Math.random;
+  const rollDmg = (minAtk, maxAtk, minDef, maxDef) => {
+    const atk = minAtk + rng() * (maxAtk - minAtk);
+    const def = (minDef || 0) + rng() * ((maxDef || 0) - (minDef || 0));
+    return Math.max(1, Math.floor(atk - def * 0.6));
+  };
+
+  const defBonus = getBuffDefBonus(player);
+  const scBase = stats.maxSc > 0 ? stats.maxSc : stats.maxAtk;
+  const magicBase = player.job === "mage" ? stats.maxMc : stats.maxSc;
+
+  // 输出侧技能分类（延迟型独立冷却，常驻型每回合生效）
+  const delaySkills = [], residentSkills = [], aoeResident = [], aoeDelay = [];
+  let passiveMagic = 0, normalPassive = parts.normalPassive;
+  for (const sk of player.equippedSkills || []) {
+    const sd = SKILLS[sk]; if (!sd) continue;
+    if (sd.delay > 0) {
+      if (sd.aoe) aoeDelay.push(sk); else delaySkills.push(sk);
+    } else if (sd.type === "attack" && !sd.aoe && sk !== "施毒术" && sk !== "瘟疫" && sk !== "毒云") {
+      residentSkills.push(sk);
+    } else if (sd.aoe && sd.type === "attack") {
+      aoeResident.push(sk);
+    } else if (sd.type === "passive") {
+      passiveMagic += sd.damageBonus;
+    }
+  }
+  const cooldowns = {};
+
+  // 击杀收益：金币期望 / 经验
+  const killGold = {};
+  for (const m of map.monsters) {
+    const r = rollDropExpect(m.name, MONSTERS[m.name] ? MONSTERS[m.name].level : 1);
+    killGold[m.name] = r.gold;
+  }
+
+  // 模拟状态
+  let hp = stats.maxHp, mp = stats.maxMp;
+  let monsters = [];            // 当前波存活怪
+  let bossMinions = [];         // BOSS 召唤物（最多2只，atk）
+  let playerPoison = 0, playerPoisonDmg = 0, playerStunned = false;
+  let simGold = 1000000;        // 模拟金币池（死亡按1%扣）
+  let kills = 0, expGain = 0, deaths = 0, dropGold = 0, potGold = 0;
+
+  const spawnWave = () => {
+    const total = map.monsters.reduce((s, m) => s + m.count, 0);
+    monsters = [];
+    for (let i = 0; i < N; i++) {
+      let roll = rng() * total, chosen = map.monsters[0].name;
+      for (const m of map.monsters) { roll -= m.count; if (roll <= 0) { chosen = m.name; break; } }
+      const t = MONSTERS[chosen]; if (!t) continue;
+      monsters.push({ name: chosen, cur: t.hp, maxHp: t.hp, minAtk: t.minAtk, maxAtk: t.maxAtk,
+        minDef: t.minDef, maxDef: t.minDef, minMagDef: t.minMagDef, maxMagDef: t.minMagDef,
+        exp: t.exp, skills: t.skills || [], stunned: false });
+    }
+    bossMinions = [];
+  };
+
+  const onKill = (m) => {
+    kills++; expGain += m.exp; dropGold += killGold[m.name] || 0; simGold += killGold[m.name] || 0;
+  };
+  const hit = (m, dmg) => { m.cur -= dmg; if (m.cur <= 0 && !m.dead) { m.dead = true; onKill(m); } };
+
+  // AI 选药（复刻 _resolveAutoPotion auto 模式：恢复量最贴合缺口；金币不足自动降级）
+  const drinkPotion = (kind, cur, max) => {
+    const missing = max - cur;
+    const cands = Object.entries(ITEMS).filter(([, i]) =>
+      i.type === "potion" && (kind === "hp" ? i.healHp : (i.healMp && !i.healHp)));
+    cands.sort((a, b) => Math.abs((kind === "hp" ? a[1].healHp : a[1].healMp) - missing)
+      - Math.abs((kind === "hp" ? b[1].healHp : b[1].healMp) - missing));
+    for (const [, info] of cands) {
+      if (simGold >= (info.price || 0)) {
+        simGold -= info.price || 0; potGold += info.price || 0;
+        return kind === "hp" ? Math.min(info.healHp, missing) : Math.min(info.healMp, max - cur);
+      }
+    }
+    return 0;
+  };
+
+  const autoHeal = () => {
+    if (hp < stats.maxHp * HP_TH) hp = Math.min(stats.maxHp, hp + drinkPotion("hp", hp, stats.maxHp));
+    if (mp > 0 && mp < stats.maxMp * MP_TH) mp = Math.min(stats.maxMp, mp + drinkPotion("mp", mp, stats.maxMp));
+  };
+
+  const onDeath = () => {
+    deaths++;
+    const loss = Math.floor(simGold * 0.01);
+    simGold -= loss; dropGold -= loss; // 死亡损失1%金币（从收益中扣除）
+    hp = stats.maxHp; mp = stats.maxMp;
+    playerPoison = 0; playerPoisonDmg = 0; playerStunned = false;
+    monsters = []; bossMinions = []; // 波次清零重刷（打了一半的怪作废）
+  };
+
+  // 全部存活怪反击一轮（麻痹回合 / 普通回合共用）
+  const monstersAttack = () => {
+    // 宝宝分流：隐身覆盖率内100%打宝宝，其余40%概率打宝宝（宝宝不死、不追踪，简化）
+    const petRate = parts.hasMinion ? parts.stealthUptime + (1 - parts.stealthUptime) * 0.4 : 0;
+    for (const m of monsters) {
+      if (m.dead) continue;
+      if (m.stunned) { m.stunned = false; continue; }
+      if (rng() < petRate) continue;
+      hp -= Math.max(1, Math.floor(rollDmg(m.minAtk, m.maxAtk, stats.minDef, stats.maxDef) * (1 - defBonus)));
+      if (hp <= 0) return;
+      for (const sk of m.skills) {
+        if (rng() > sk.chance) continue;
+        if (sk.type === "magic") {
+          hp -= Math.max(1, Math.floor(rollDmg(m.minAtk, m.maxAtk, stats.minMagDef, stats.maxMagDef) * sk.power * (1 - defBonus)));
+        } else if (sk.type === "poison") {
+          playerPoison = 3; playerPoisonDmg = Math.max(2, Math.floor(m.maxAtk * sk.power * 0.3)); // 毒不吃减伤
+        } else if (sk.type === "paralysis" || sk.type === "freeze") {
+          playerStunned = true;
+        } else if (sk.type === "summon") {
+          if (bossMinions.length < 2) bossMinions.push({ atk: Math.floor(m.maxAtk * sk.power * 0.5) });
+        } else if (sk.type === "lifesteal") {
+          const d = Math.max(1, Math.floor(rollDmg(m.minAtk, m.maxAtk, stats.minDef, stats.maxDef) * sk.power * (1 - defBonus)));
+          hp -= d; m.cur = Math.min(m.maxHp, m.cur + Math.floor(d * 0.5));
+        }
+        if (hp <= 0) return;
+      }
+    }
+    // BOSS 召唤物攻击（不走减伤，扣最小防×0.3）
+    for (const s of bossMinions) {
+      hp -= Math.max(1, Math.floor(s.atk * (0.8 + rng() * 0.4) - stats.minDef * 0.3));
+      if (hp <= 0) return;
+    }
+  };
+
+  for (let turn = 0; turn < TURNS; turn++) {
+    if (monsters.length === 0) spawnWave();
+    monsters = monsters.filter(m => !m.dead);
+
+    // 1. 玩家中毒 DOT（先于行动结算）
+    if (playerPoison > 0) { hp -= playerPoisonDmg; playerPoison--; if (hp <= 0) { onDeath(); continue; } }
+
+    // 2. 麻痹回合：跳过行动，全怪围殴
+    if (playerStunned) {
+      playerStunned = false;
+      monstersAttack();
+      if (hp <= 0) { onDeath(); continue; }
+      autoHeal();
+      continue;
+    }
+
+    // 3. 玩家攻击主目标（普攻 roll + 魔法段 roll）
+    let mon = monsters.find(m => !m.dead);
+    if (!mon) { spawnWave(); monsters = monsters.filter(m => !m.dead); mon = monsters[0]; if (!mon) continue; }
+
+    // 技能冷却推进 + 当回合触发加成（复刻 processSkillCooldowns）
+    let triggeredBonus = 0; const triggeredAoe = [];
+    for (const sk of delaySkills.concat(aoeDelay)) {
+      const sd = SKILLS[sk];
+      if (cooldowns[sk] === undefined) cooldowns[sk] = 0;
+      if (cooldowns[sk] <= 0) {
+        const cost = sd.delay * 2;
+        if (mp >= cost) {
+          mp -= cost; triggeredBonus += sd.damageBonus; cooldowns[sk] = sd.delay;
+          if (sd.aoe) triggeredAoe.push(sk); // 触发型AOE：既进魔法段也进当回合溅射
+        }
+      } else cooldowns[sk]--;
+    }
+    // 常驻单体魔法技能（各耗2MP，MP不足跳过）
+    let residentBonus = 0;
+    for (const sk of residentSkills) { if (mp >= 2) { mp -= 2; residentBonus += SKILLS[sk].damageBonus; } }
+
+    let dmg = rollDmg(stats.minAtk, stats.maxAtk, mon.minDef, mon.maxDef);
+    dmg = Math.floor(dmg * (1 + normalPassive));
+    const magicBonus = triggeredBonus + residentBonus + passiveMagic;
+    if (magicBonus > 0 && magicBase > 0) {
+      const mMin = Math.floor(magicBase * (1 + magicBonus) * 0.9);
+      const mMax = Math.floor(magicBase * (1 + magicBonus) * 1.1);
+      dmg += rollDmg(mMin, mMax, mon.minMagDef, mon.maxMagDef);
+    }
+    hit(mon, Math.max(1, dmg));
+
+    // 4. AOE 溅射：全场存活怪（含主目标）；道士/战士口径与原版一致
+    const aoeBonusNow = aoeResident.reduce((s, sk) => s + SKILLS[sk].damageBonus, 0)
+      + triggeredAoe.reduce((s, sk) => s + SKILLS[sk].damageBonus, 0);
+    if (aoeBonusNow > 0) {
+      let splash = 0;
+      if (player.job === "mage") splash = Math.max(1, Math.floor(stats.maxMc * aoeBonusNow));
+      else if (player.job === "taoist") splash = rollDmg(Math.floor(magicBase * (1 + aoeBonusNow) * 0.45), Math.floor(magicBase * (1 + aoeBonusNow) * 0.55), 0, 0);
+      else splash = Math.max(1, Math.floor(dmg * aoeBonusNow * 0.5));
+      for (const m of monsters) if (!m.dead) hit(m, splash);
+    }
+    // 5. 施毒/特效/召唤宝宝（期望值通道，原版为3回合刷新DOT，稳态等效）
+    const main = monsters.find(m => !m.dead);
+    if (main) hit(main, parts.poisonSingle + parts.specialSingle);
+    if (parts.poisonAoEPerMon > 0) for (const m of monsters) if (!m.dead) hit(m, parts.poisonAoEPerMon);
+    if (parts.summonPerMon > 0) for (const m of monsters) if (!m.dead) hit(m, parts.summonPerMon);
+
+    // 6. 怪物反击
+    monstersAttack();
+    if (hp <= 0) { onDeath(); continue; }
+
+    // 7. 回合末喝药（一回合一瓶HP+一瓶MP）
+    autoHeal();
+
+    // 8. 波次全灭：清除毒/麻痹状态（下回合重刷）
+    if (monsters.every(m => m.dead)) { monsters = []; bossMinions = []; playerPoison = 0; playerStunned = false; }
+  }
+
+  const minutes = TURNS / 60;
+  return {
+    turns: TURNS,
+    killsPerMin: Math.round(kills / minutes * 10) / 10,
+    expPerMin: Math.round(expGain / minutes),
+    dropGoldPerMin: Math.round(dropGold / minutes),
+    potGoldPerMin: Math.round(potGold / minutes),
+    netGoldPerMin: Math.round((dropGold - potGold) / minutes),
+    deathsPerHour: Math.round(deaths / (TURNS / 3600) * 10) / 10,
+    deaths: deaths, kills,
+  };
+}
+
 // ===================== UI =====================
 let currentResults = [];
 let sortKey = "expPerMin";
@@ -438,7 +670,12 @@ function loadAndCalc() {
   renderPlayer(player, stats, dps, mpPerTurn, singleAtkSkills);
 
   // 计算所有地图（parts 用于对每只怪单独扣防）
-  currentResults = MAPS.map(m => calcMap(m, player, stats, dps, mpPerTurn, parts));
+  const simOpts = getSimOptions();
+  currentResults = MAPS.map(m => {
+    const r = calcMap(m, player, stats, dps, mpPerTurn, parts);
+    r.sim = simulateMap(m, player, stats, parts, simOpts);
+    return r;
+  });
   // 默认按经验降序
   sortKey = "expPerMin"; sortDesc = true;
   renderTable();
@@ -468,6 +705,15 @@ function renderPlayer(player, stats, dps, mpPerTurn, singleAtkSkills) {
   document.getElementById("player-card").innerHTML = html;
 }
 
+// 模拟选项：从页面控件读取（喝药阈值需与游戏内设置一致，否则死亡/时严重失真）
+function getSimOptions() {
+  const hpSel = document.getElementById("sim-hp-threshold");
+  return {
+    hpThreshold: hpSel ? parseFloat(hpSel.value) : 0.7,
+    mpThreshold: 0.3,
+  };
+}
+
 const COLUMNS = [
   { key: "name",     label: "地图",        sort: r => r.map.name,            align: "left" },
   { key: "lv",       label: "要求",        sort: r => r.map.levelReq,        align: "center" },
@@ -476,6 +722,7 @@ const COLUMNS = [
   { key: "goldPerMin",label:"金币/分",     sort: r => r.goldPerMin,          align: "right" },
   { key: "netGold",  label: "净金币/分",   sort: r => r.netGold,             align: "right" },
   { key: "safety",   label: "安全度",      sort: r => r.safety,              align: "center" },
+  { key: "simDeath", label: "死亡/时🎲",   sort: r => r.sim ? r.sim.deathsPerHour : Infinity, align: "center" },
   { key: "drops",    label: "掉落概要",    sort: null,                       align: "left" },
 ];
 
@@ -543,6 +790,17 @@ function renderRow(r, idx) {
     : r.practical ? (r.netGold >= 0 ? "+" : "") + r.netGold.toLocaleString()
     : "−" + (r.mpCostPerMin/30*50 + r.hpCost).toLocaleString() + "*";
 
+  // 模拟死亡/时徽章：主数值死亡频率，括号内为模拟实际经验/分（受死亡拖累）
+  const simCell = r.sim
+    ? (() => {
+        const d = r.sim.deathsPerHour;
+        const color = d <= 5 ? "#4caf50" : d <= 30 ? "#ffc107" : d <= 120 ? "#ff9800" : "#ef5350";
+        const dTxt = d >= 1000 ? "≈" + Math.round(d) : d;
+        const e = r.sim.expPerMin >= 10000 ? (r.sim.expPerMin / 10000).toFixed(1) + "万" : r.sim.expPerMin;
+        return `<span style="color:${color};font-weight:600" title="蒙特卡洛模拟${r.sim.turns}回合：死亡${r.sim.deaths}次，实际经验${r.sim.expPerMin}/分，药费${r.sim.potGoldPerMin}/分">${dTxt}</span> <span style="color:#888;font-size:10px">(${e})</span>`;
+      })()
+    : '<span style="color:#888">-</span>';
+
   const row = `<tr class="${rowCls}" id="row-${idx}">
     <td class="map-name"><b>${r.map.name}</b>${c2tag}${statusTag}</td>
     <td class="num">${r.map.levelReq}</td>
@@ -551,11 +809,12 @@ function renderRow(r, idx) {
     <td class="num">${goldCell}</td>
     <td class="num ${r.lethal ? "" : (r.practical ? netCls : "neg")}">${netCell}</td>
     <td class="num ${safeCls}">${safeTxt}</td>
+    <td class="num">${simCell}</td>
     <td class="drops-cell">${dropHtml}</td>
   </tr>`;
 
   const detailRow = expandedRow === idx
-    ? `<tr class="detail-row"><td colspan="8">${renderDetail(r)}</td></tr>` : "";
+    ? `<tr class="detail-row"><td colspan="9">${renderDetail(r)}</td></tr>` : "";
   return row + detailRow;
 }
 
@@ -563,17 +822,19 @@ function renderDetail(r) {
   const danger = r.dangerMonsters.length
     ? `<div style="margin-bottom:10px;color:#ef9a9a;">⚠️ 危险怪物: ${r.dangerMonsters.map(d => `${d.name}(L${d.lv},打${d.dmg}/击,扛${d.survive})×${d.count}`).join("， ")}</div>`
     : "";
+  const simInfo = r.sim
+    ? `<div style="margin-bottom:10px;color:#ce93d8;">🎲 蒙特卡洛模拟（${r.sim.turns}回合≈${Math.round(r.sim.turns/60)}分钟游戏时间）：死亡 <b>${r.sim.deathsPerHour}/时</b>（共${r.sim.deaths}次），实际击杀 ${r.sim.killsPerMin}/分、经验 ${r.sim.expPerMin.toLocaleString()}/分、药费 ${r.sim.potGoldPerMin.toLocaleString()}金/分、净金 ${r.sim.netGoldPerMin.toLocaleString()}金/分。解析式经验 ${r.expPerMin.toLocaleString()}/分${r.sim.expPerMin < r.expPerMin * 0.8 ? '，模拟受死亡拖累明显低于解析值' : ''}</div>`
+    : "";
   const lethalInfo = r.lethal
     ? `<div style="margin-bottom:10px;color:#ef5350;">💀 瞬间秒杀：单回合承伤约 ${Math.round(r.hpTakenPerMin/(60*0.95))} HP ≥ 满血，autoHeal 来不及喝药就阵亡，无法有效挂机，收益为 0</div>`
     : "";
   const mpInfo = `<div style="margin-bottom:10px;color:#90caf9;">💧 蓝耗 ${r.mpCostPerMin} MP/分，地图掉落蓝药 ${r.freeMpPot} 瓶/分</div>`;
-  const hpInfo = `<div style="margin-bottom:10px;color:#ef9a9a;">❤️ 承受伤害 ${r.hpTakenPerMin} HP/分，红药成本 ${r.hpCost} 金/分</div>`;
-  const drops = `<div class="detail-content">${r.allDrops.map(d => {
+  const hpInfo = `<div style="margin-bottom:10px;color:#ef9a9a;">❤️ 承受伤害 ${r.hpTakenPerMin} HP/分，红药成本 ${r.hpCost} 金/分</div>`;  const drops = `<div class="detail-content">${r.allDrops.map(d => {
     const it = d.info || {};
     const typeTag = it.type ? `<span class="prob">[${it.type}${it.job ? "/" + it.job : ""}${it.level ? " L" + it.level : ""}]</span>` : "";
     return `<div class="drop-item"><span class="name">${d.name}</span> ${typeTag}<span class="prob"> 1/${d.chance}</span><br><span class="src">来源: ${d.sources.join("， ")}</span></div>`;
   }).join("")}</div>`;
-  return danger + lethalInfo + mpInfo + hpInfo + drops;
+  return danger + simInfo + lethalInfo + mpInfo + hpInfo + drops;
 }
 
 function setSort(key) {
