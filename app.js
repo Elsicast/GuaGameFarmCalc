@@ -237,23 +237,24 @@ function getGenericItemSet() {
   return _genericItemSet;
 }
 
-// 计算某怪的金币期望 + 药水期望（瓶数 + 回血/回蓝量，按该怪自己的掉落档）
+// 计算某怪的金币期望 + 药水期望（瓶数 + 半价卖店收入，按该怪自己的掉落档）
 function rollDropExpect(monName, monLevel) {
   const table = getDropTable(monName, monLevel);
   let gold = 0, hpPot = 0, mpPot = 0; // 瓶数
-  let hpHeal = 0, mpHeal = 0;         // 回血/回蓝总量（瓶数×单瓶恢复量）
+  let potSale = 0;                    // 掉落药只能半价卖店（不一定能自动喝），不抵扣药费
   const items = [];
   for (const d of table) {
     const p = 1 / d.chance;
     if (d.item === "金币") { gold += p * (d.count || 100); continue; }
     const it = ITEMS[d.item];
     if (it && it.type === "potion") {
-      if (it.healHp) { hpPot += p; hpHeal += p * it.healHp; }
-      else if (it.healMp) { mpPot += p; mpHeal += p * it.healMp; }
+      if (it.healHp) hpPot += p;
+      else if (it.healMp) mpPot += p;
+      potSale += p * (it.price || 0) * 0.5;
     }
     items.push({ name: d.item, chance: d.chance, info: it });
   }
-  return { gold, hpPot, mpPot, hpHeal, mpHeal, items };
+  return { gold, hpPot, mpPot, potSale, items };
 }
 
 // 读取用户选择的波次大小（1/3/5/10，与游戏内设置一致；默认10）
@@ -274,8 +275,8 @@ function calcMap(map, player, stats, _dps, mpPerTurn, parts) {
   let dangerCount = 0, dangerMonsters = [];
 
   let wHP = 0, wExp = 0, wGold = 0, wSingle = 0, wAoe = 0;
-  let wDmgToPlayer = 0, wHpPotPerKill = 0, wMpPotPerKill = 0;
-  let wHpHealPerKill = 0, wMpHealPerKill = 0, wSurvive = 0;
+  let wDmgToPlayer = 0, wMpPotPerKill = 0, wPotSale = 0;
+  let wSurvive = 0;
 
   for (const entry of map.monsters) {
     const mon = MONSTERS[entry.name];
@@ -298,8 +299,8 @@ function calcMap(map, player, stats, _dps, mpPerTurn, parts) {
     wAoe += aoe * w * z;
     wGold += r.gold * w * z;
     wDmgToPlayer += dmgToPlayer * w * z;
-    wHpPotPerKill += r.hpPot * w * z; wMpPotPerKill += r.mpPot * w * z;
-    wHpHealPerKill += r.hpHeal * w * z; wMpHealPerKill += r.mpHeal * w * z;
+    wMpPotPerKill += r.mpPot * w * z;
+    wPotSale += r.potSale * w * z;
     wSurvive += survive * w * z;
     // 掉落展示：秒杀怪仍可入 allDrops（仅展示来源，不计入收益）
     for (const it of r.items) {
@@ -325,19 +326,18 @@ function calcMap(map, player, stats, _dps, mpPerTurn, parts) {
   const expPerMin = Math.round(wExp * killsPerMin);
   const goldPerMin = Math.round(wGold * killsPerMin);
 
-  // 蓝药
+  // 药钱单独计算：按实际消耗 × 购买单价（小量药 50金/30点最划算），
+  // 掉落药不抵扣药费（只能半价卖店、不一定能自动喝），其半价收入计入毛金币。
   const mpCostPerMin = mpPerTurn * turnsPerMin;
   const mpPotPerMin = wMpPotPerKill * killsPerMin;
-  const freeMpPerMin = wMpHealPerKill * killsPerMin;
-  const mpCost = Math.max(0, mpCostPerMin - freeMpPerMin) * (50 / 30);
+  const potSalePerMin = wPotSale * killsPerMin;
+  const mpCost = mpCostPerMin * (50 / 30);
 
   // 红药：每回合承伤 = 平均存活(N/2) × 单怪伤害 × 分摊率（宝宝40%挡 / 隐身100%挡）
   const shareRate = parts.hasMinion ? (1 - parts.stealthUptime) * 0.6 : 1.0;
   const dmgPerTurn = (N / 2) * wDmgToPlayer * shareRate;
   const hpTakenPerMin = dmgPerTurn * turnsPerMin;
-  const hpPotPerMin = wHpPotPerKill * killsPerMin;
-  const freeHpPerMin = wHpHealPerKill * killsPerMin;
-  const hpCost = Math.max(0, hpTakenPerMin - freeHpPerMin) * (50 / 30);
+  const hpCost = hpTakenPerMin * (50 / 30);
 
   const safety = Math.max(0, Math.round(100 - (dangerCount / totalWeight) * 100));
   // 瞬间秒杀判定：autoHeal 每回合末才喝药，而怪物先反击——若一回合内合击总伤害 ≥ maxHp，
@@ -347,8 +347,8 @@ function calcMap(map, player, stats, _dps, mpPerTurn, parts) {
   const practical = !instakillBarrage && wSurvive >= hitsToKill * 1.2 && safety >= 40;
   // 瞬间秒杀：收益全 0（无有效战斗，无药费亏损）
   const expPerMinFinal = instakillBarrage ? 0 : expPerMin;
-  const goldPerMinFinal = instakillBarrage ? 0 : goldPerMin;
-  const netGold = instakillBarrage ? 0 : Math.round(goldPerMin - mpCost - hpCost);
+  const goldPerMinFinal = instakillBarrage ? 0 : Math.round(goldPerMin + potSalePerMin); // 金币掉落 + 掉落药半价卖店
+  const netGold = instakillBarrage ? 0 : Math.round(goldPerMinFinal - mpCost - hpCost);
 
   const dropSummary = Object.values(allDrops)
     .filter(d => {
@@ -364,8 +364,9 @@ function calcMap(map, player, stats, _dps, mpPerTurn, parts) {
     map, expPerMin: expPerMinFinal, goldPerMin: goldPerMinFinal, netGold,
     killsPerMin: Math.round(killsPerMin * 10) / 10,
     hitsToKill: Math.round(hitsToKill * 10) / 10, safety, dangerMonsters,
-    mpCostPerMin: Math.round(mpCostPerMin), freeMpPot: Math.round(mpPotPerMin * 10) / 10,
+    mpCostPerMin: Math.round(mpCostPerMin), dropMpPot: Math.round(mpPotPerMin * 10) / 10,
     hpTakenPerMin: Math.round(hpTakenPerMin), hpCost: Math.round(hpCost),
+    potSalePerMin: Math.round(potSalePerMin), coinGoldPerMin: Math.round(goldPerMin),
     allDrops: Object.values(allDrops).sort((a, b) => a.chance - b.chance), dropSummary,
     locked: player.level < map.levelReq,
     practical, lethal: instakillBarrage, wSurvive: Math.round(wSurvive * 10) / 10,
@@ -429,11 +430,11 @@ function simulateMap(map, player, stats, parts, opts) {
   }
   const cooldowns = {};
 
-  // 击杀收益：金币期望 / 经验
+  // 击杀收益：金币期望（金币掉落 + 掉落药半价卖店，掉落药不抵扣药费）/ 经验
   const killGold = {};
   for (const m of map.monsters) {
     const r = rollDropExpect(m.name, MONSTERS[m.name] ? MONSTERS[m.name].level : 1);
-    killGold[m.name] = r.gold;
+    killGold[m.name] = r.gold + r.potSale;
   }
 
   // 模拟状态
@@ -678,7 +679,7 @@ function loadAndCalc() {
     r.sim = simulateMap(m, player, stats, parts, simOpts);
     return r;
   });
-  // 默认按经验降序
+  // 默认按经验降序（主列即模拟值 → 实际按模拟经验排序）
   sortKey = "expPerMin"; sortDesc = true;
   renderTable();
 }
@@ -716,13 +717,16 @@ function getSimOptions() {
   };
 }
 
+// 排序与主列数值以蒙特卡洛模拟结果为准（含死亡拖累的真实收益），无模拟时回退解析式
+const simVal = (r, key) => (r.sim && r.sim[key] !== undefined ? r.sim[key] : r[key]);
+
 const COLUMNS = [
   { key: "name",     label: "地图",        sort: r => r.map.name,            align: "left" },
   { key: "lv",       label: "要求",        sort: r => r.map.levelReq,        align: "center" },
-  { key: "kills",    label: "击杀/分",     sort: r => r.killsPerMin,         align: "right" },
-  { key: "expPerMin",label: "经验/分",     sort: r => r.expPerMin,           align: "right" },
-  { key: "goldPerMin",label:"金币/分",     sort: r => r.goldPerMin,          align: "right" },
-  { key: "netGold",  label: "净金币/分",   sort: r => r.netGold,             align: "right" },
+  { key: "kills",    label: "击杀/分",     sort: r => simVal(r, "killsPerMin"),  align: "right", sim: true },
+  { key: "expPerMin",label: "经验/分",     sort: r => simVal(r, "expPerMin"),    align: "right", sim: true },
+  { key: "goldPerMin",label:"金币/分",     sort: r => simVal(r, "dropGoldPerMin"), align: "right", sim: true },
+  { key: "netGold",  label: "净金币/分",   sort: r => simVal(r, "netGoldPerMin"),  align: "right", sim: true },
   { key: "safety",   label: "安全度",      sort: r => r.safety,              align: "center" },
   { key: "simDeath", label: "死亡/时🎲",   sort: r => r.sim ? r.sim.deathsPerHour : Infinity, align: "center" },
   { key: "drops",    label: "掉落概要",    sort: null,                       align: "left" },
@@ -734,7 +738,8 @@ function renderTable() {
   const head = COLUMNS.map(c => {
     const arrow = sortKey === c.key ? (sortDesc ? "▼" : "▲") : "";
     const style = c.sort ? ` style="cursor:pointer" onclick="setSort('${c.key}')"` : "";
-    return `<th${style} class="${c.align === 'right' ? 'num' : c.align === 'center' ? 'num' : ''}">${c.label} <span class="arrow">${arrow}</span></th>`;
+    const hint = c.sim ? ` title="蒙特卡洛模拟值（受死亡拖累的真实收益），点击按此排序"` : "";
+    return `<th${style}${hint} class="${c.align === 'right' ? 'num' : c.align === 'center' ? 'num' : ''}">${c.label} <span class="arrow">${arrow}</span></th>`;
   }).join("");
   document.getElementById("result-head").innerHTML = `<tr>${head}</tr>`;
 
@@ -772,7 +777,9 @@ function renderRow(r, idx) {
     statusTag = ' <span style="color:#ff9800;font-size:11px">⚠️打不动</span>';
   }
   const c2tag = r.map.continent === 2 ? ' <span class="c2">[二大陆]</span>' : "";
-  const netCls = r.netGold >= 0 ? "pos" : "neg";
+  // 主列显示蒙特卡洛模拟值（真实收益），解析式值放 tooltip 对比
+  const simExp = simVal(r, "expPerMin"), simGold = simVal(r, "dropGoldPerMin"), simNet = simVal(r, "netGoldPerMin");
+  const netCls = simNet >= 0 ? "pos" : "neg";
   const safeCls = r.safety >= 80 ? "safe-high" : (r.safety >= 50 ? "safe-mid" : "safe-low");
   const safeTxt = r.safety + "%" + (r.dangerMonsters.length ? ` <span style="color:#888;font-size:10px">(${r.dangerMonsters.length}种危险)</span>` : "");
 
@@ -783,30 +790,29 @@ function renderRow(r, idx) {
 
   // 合击致死：经验/金币/净金全显示 0（无有效战斗）
   const expCell = r.lethal ? '<span style="color:#888">0</span>'
-    : r.practical ? "<b>"+r.expPerMin.toLocaleString()+"</b>"
-    : '<span style="color:#888" title="扛不到杀死怪就死，拿不到经验">'+r.expPerMin.toLocaleString()+'*</span>';
+    : r.practical ? `<b title="蒙特卡洛模拟值；解析式(不含死亡拖累)${r.expPerMin.toLocaleString()}/分">${simExp.toLocaleString()}</b>`
+    : `<span style="color:#888" title="扛不到杀死怪就死，实际收益受死亡拖累；解析式${r.expPerMin.toLocaleString()}/分">${simExp.toLocaleString()}*</span>`;
   const goldCell = r.lethal ? '<span style="color:#888">0</span>'
-    : r.practical ? r.goldPerMin.toLocaleString()
-    : '<span style="color:#888" title="打不死怪，无掉落">~0*</span>';
+    : r.practical ? `<span title="模拟毛金币：金币掉落+掉落药半价卖店-死亡损失">${simGold.toLocaleString()}</span>`
+    : `<span style="color:#888" title="打不死怪，收益受死亡拖累">${simGold.toLocaleString()}*</span>`;
   const netCell = r.lethal ? '<span style="color:#888">0</span>'
-    : r.practical ? (r.netGold >= 0 ? "+" : "") + r.netGold.toLocaleString()
-    : "−" + (r.mpCostPerMin/30*50 + r.hpCost).toLocaleString() + "*";
+    : r.practical ? (simNet >= 0 ? "+" : "") + simNet.toLocaleString()
+    : `<span style="color:#888" title="模拟净金：毛金币-药费(全价购买)">${simNet.toLocaleString()}*</span>`;
 
-  // 模拟死亡/时徽章：主数值死亡频率，括号内为模拟实际经验/分（受死亡拖累）
+  // 模拟死亡/时徽章（实际经验已在「经验/分」主列展示）
   const simCell = r.sim
     ? (() => {
         const d = r.sim.deathsPerHour;
         const color = d <= 5 ? "#4caf50" : d <= 30 ? "#ffc107" : d <= 120 ? "#ff9800" : "#ef5350";
         const dTxt = d >= 1000 ? "≈" + Math.round(d) : d;
-        const e = r.sim.expPerMin >= 10000 ? (r.sim.expPerMin / 10000).toFixed(1) + "万" : r.sim.expPerMin;
-        return `<span style="color:${color};font-weight:600" title="蒙特卡洛模拟${r.sim.turns}回合：死亡${r.sim.deaths}次，实际经验${r.sim.expPerMin}/分，药费${r.sim.potGoldPerMin}/分">${dTxt}</span> <span style="color:#888;font-size:10px">(${e})</span>`;
+        return `<span style="color:${color};font-weight:600" title="蒙特卡洛模拟${r.sim.turns}回合：死亡${r.sim.deaths}次，药费${r.sim.potGoldPerMin}/分，净金${r.sim.netGoldPerMin}/分">${dTxt}</span>`;
       })()
     : '<span style="color:#888">-</span>';
 
   const row = `<tr class="${rowCls}" id="row-${idx}">
     <td class="map-name"><b>${r.map.name}</b>${c2tag}${statusTag}</td>
     <td class="num">${r.map.levelReq}</td>
-    <td class="num">${r.killsPerMin}</td>
+    <td class="num">${simVal(r, "killsPerMin")}</td>
     <td class="num">${expCell}</td>
     <td class="num">${goldCell}</td>
     <td class="num ${r.lethal ? "" : (r.practical ? netCls : "neg")}">${netCell}</td>
@@ -825,18 +831,19 @@ function renderDetail(r) {
     ? `<div style="margin-bottom:10px;color:#ef9a9a;">⚠️ 危险怪物: ${r.dangerMonsters.map(d => `${d.name}(L${d.lv},打${d.dmg}/击,扛${d.survive})×${d.count}`).join("， ")}</div>`
     : "";
   const simInfo = r.sim
-    ? `<div style="margin-bottom:10px;color:#ce93d8;">🎲 蒙特卡洛模拟（${r.sim.turns}回合≈${Math.round(r.sim.turns/60)}分钟游戏时间）：死亡 <b>${r.sim.deathsPerHour}/时</b>（共${r.sim.deaths}次），实际击杀 ${r.sim.killsPerMin}/分、经验 ${r.sim.expPerMin.toLocaleString()}/分、药费 ${r.sim.potGoldPerMin.toLocaleString()}金/分、净金 ${r.sim.netGoldPerMin.toLocaleString()}金/分。解析式经验 ${r.expPerMin.toLocaleString()}/分${r.sim.expPerMin < r.expPerMin * 0.8 ? '，模拟受死亡拖累明显低于解析值' : ''}</div>`
+    ? `<div style="margin-bottom:10px;color:#ce93d8;">🎲 蒙特卡洛模拟（${r.sim.turns}回合≈${Math.round(r.sim.turns/60)}分钟游戏时间，主列数值即模拟结果）：死亡 <b>${r.sim.deathsPerHour}/时</b>（共${r.sim.deaths}次），实际击杀 ${r.sim.killsPerMin}/分、经验 ${r.sim.expPerMin.toLocaleString()}/分、毛金币 ${r.sim.dropGoldPerMin.toLocaleString()}金/分（含掉落药半价卖店、扣死亡损失）、药费 ${r.sim.potGoldPerMin.toLocaleString()}金/分、净金 ${r.sim.netGoldPerMin.toLocaleString()}金/分。解析式(无死亡)经验 ${r.expPerMin.toLocaleString()}/分${r.sim.expPerMin < r.expPerMin * 0.8 ? '，模拟受死亡拖累明显低于解析值' : ''}</div>`
     : "";
   const lethalInfo = r.lethal
     ? `<div style="margin-bottom:10px;color:#ef5350;">💀 瞬间秒杀：单回合承伤约 ${Math.round(r.hpTakenPerMin/(60*0.95))} HP ≥ 满血，autoHeal 来不及喝药就阵亡，无法有效挂机，收益为 0</div>`
     : "";
-  const mpInfo = `<div style="margin-bottom:10px;color:#90caf9;">💧 蓝耗 ${r.mpCostPerMin} MP/分，地图掉落蓝药 ${r.freeMpPot} 瓶/分</div>`;
-  const hpInfo = `<div style="margin-bottom:10px;color:#ef9a9a;">❤️ 承受伤害 ${r.hpTakenPerMin} HP/分，红药成本 ${r.hpCost} 金/分</div>`;  const drops = `<div class="detail-content">${r.allDrops.map(d => {
+  const goldInfo = `<div style="margin-bottom:10px;color:#ffd54f;">💰 解析式金币口径：金币掉落 ${r.coinGoldPerMin.toLocaleString()}/分 + 掉落药半价卖出 ${r.potSalePerMin.toLocaleString()}/分 − 药费 ${Math.round(r.mpCostPerMin * 50 / 30 + r.hpCost).toLocaleString()}/分 = 净金 ${r.netGold.toLocaleString()}/分（药钱按消耗全价单独计算，掉落药只能半价卖店、不抵扣药费）</div>`;
+  const mpInfo = `<div style="margin-bottom:10px;color:#90caf9;">💧 蓝耗 ${r.mpCostPerMin} MP/分，蓝药费 ${Math.round(r.mpCostPerMin * 50 / 30).toLocaleString()}金/分，地图掉落蓝药 ${r.dropMpPot} 瓶/分（半价卖出）</div>`;
+  const hpInfo = `<div style="margin-bottom:10px;color:#ef9a9a;">❤️ 承受伤害 ${r.hpTakenPerMin} HP/分，红药费 ${r.hpCost} 金/分</div>`;  const drops = `<div class="detail-content">${r.allDrops.map(d => {
     const it = d.info || {};
     const typeTag = it.type ? `<span class="prob">[${it.type}${it.job ? "/" + it.job : ""}${it.level ? " L" + it.level : ""}]</span>` : "";
     return `<div class="drop-item"><span class="name">${d.name}</span> ${typeTag}<span class="prob"> 1/${d.chance}</span><br><span class="src">来源: ${d.sources.join("， ")}</span></div>`;
   }).join("")}</div>`;
-  return danger + simInfo + lethalInfo + mpInfo + hpInfo + drops;
+  return danger + simInfo + lethalInfo + goldInfo + mpInfo + hpInfo + drops;
 }
 
 function setSort(key) {
