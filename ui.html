@@ -25,9 +25,12 @@
         <option value="10" selected>10只</option>
       </select>
     </label>
-    <label style="display:flex;align-items:center;gap:4px;font-size:13px;color:#b0bec5" title="游戏内「自动喝药」的HP阈值设置。必须与游戏内一致，否则模拟死亡/时严重失真（原版默认70%）">HP喝药阈值
+    <label style="display:flex;align-items:center;gap:4px;font-size:13px;color:#b0bec5" title="游戏内「自动喝药」的HP阈值设置（游戏里可自由输入1-99%）。选「自动优化」则每张图自动扫描各阈值并推荐最优（主列为最优阈值下的模拟值）；手动值需与游戏内一致，否则模拟死亡/时失真">HP喝药阈值
       <select id="sim-hp-threshold" onchange="loadAndCalc()">
-        <option value="0.7" selected>70%(默认)</option>
+        <option value="auto" selected>🎯自动优化</option>
+        <option value="0.9">90%</option>
+        <option value="0.8">80%</option>
+        <option value="0.7">70%(默认)</option>
         <option value="0.5">50%</option>
         <option value="0.4">40%</option>
         <option value="0.3">30%</option>
@@ -53,6 +56,7 @@
   </div>
   <p class="hint">
     💡 主列（击杀/经验/金币/净金）均为<b>蒙特卡洛模拟值</b>（受死亡拖累的真实收益），悬停可看解析式对比；计算分批进行，排名随进度实时刷新。<br>
+    💡 <b>喝药🎯列</b>=该图最优HP喝药阈值（自动寻优，AI自选药水），带 🐲 的为"多杀BOSS"备选阈值，展开行有各阈值完整对比。<br>
     💡 <b>净金币</b> = 金币掉落 + 掉落药半价卖出 − 蓝药费 − 红药费（药钱按消耗全价单独计算，掉落药不抵扣药费；模拟值另含死亡掉金损失）。<br>
     💡 带 <span style="color:#ff9800">*</span> 的数字表示该图<b>扛不到杀死怪就死</b>，经验/掉落实际拿不到，净金币为纯药水亏损。<br>
     💡 <b>击杀/分</b> 按游戏官方公式：60 ÷ (加权HP ÷ 每回合输出)，上限60（每秒1回合）。<br>
