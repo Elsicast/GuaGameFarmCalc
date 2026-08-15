@@ -349,7 +349,7 @@ tr.impractical td.map-name b { color: #ff9800; }
         <option value="10" selected>10只</option>
       </select>
     </label>
-    <label style="display:flex;align-items:center;gap:4px;font-size:13px;color:#b0bec5" title="游戏内「自动喝药」的HP阈值设置（游戏里可自由输入1-99%）。选「自动优化」则每张图自动扫描各阈值并推荐最优（主列为最优阈值下的模拟值）；手动值需与游戏内一致，否则模拟死亡/时失真">HP喝药阈值
+    <label style="display:flex;align-items:center;gap:4px;font-size:13px;color:#b0bec5" title="游戏内「自动喝药」的HP阈值设置（游戏里可自由输入1-99%）。选「自动优化」则每张图自动扫描 阈值×药水档位 并推荐最优（主列为最优策略下的模拟值）；手动值需与游戏内一致，否则模拟死亡/时失真">HP喝药阈值
       <select id="sim-hp-threshold" onchange="loadAndCalc()">
         <option value="auto" selected>🎯自动优化</option>
         <option value="0.9">90%</option>
@@ -359,6 +359,16 @@ tr.impractical td.map-name b { color: #ff9800; }
         <option value="0.4">40%</option>
         <option value="0.3">30%</option>
         <option value="0.15">15%</option>
+      </select>
+    </label>
+    <label style="display:flex;align-items:center;gap:4px;font-size:13px;color:#b0bec5" title="红药档位（游戏内 hpPotion 设置）。AI自选=按缺口选最贴合的药（会有过量浪费，如缺89喝100）；固定档位配自然阈值可零浪费。自动优化模式下此选择被忽略">红药
+      <select id="sim-hp-potion" onchange="loadAndCalc()">
+        <option value="auto" selected>AI自选</option>
+        <option value="金创药(小量)">小量(30HP/50金)</option>
+        <option value="金创药(中量)">中量(60HP/100金)</option>
+        <option value="金创药(大量)">大量(100HP/200金)</option>
+        <option value="强效金创药">强效(200HP/500金)</option>
+        <option value="金创药(特量)">特量(400HP/1000金)</option>
       </select>
     </label>
   </div>
@@ -380,7 +390,7 @@ tr.impractical td.map-name b { color: #ff9800; }
   </div>
   <p class="hint">
     💡 主列（击杀/经验/金币/净金）均为<b>蒙特卡洛模拟值</b>（受死亡拖累的真实收益），悬停可看解析式对比；计算分批进行，排名随进度实时刷新。<br>
-    💡 <b>喝药🎯列</b>=该图最优HP喝药阈值（自动寻优，AI自选药水），带 🐲 的为"多杀BOSS"备选阈值，展开行有各阈值完整对比。<br>
+    💡 <b>喝药🎯列</b>=该图最优喝药策略（阈值·红药档位，自动寻优；固定药配"自然阈值"可做到零过量浪费），带 🐲 的为"多杀BOSS"备选，展开行有完整对比表与蓝药建议。<br>
     💡 <b>净金币</b> = 金币掉落 + 掉落药半价卖出 − 蓝药费 − 红药费（药钱按消耗全价单独计算，掉落药不抵扣药费；模拟值另含死亡掉金损失）。<br>
     💡 带 <span style="color:#ff9800">*</span> 的数字表示该图<b>扛不到杀死怪就死</b>，经验/掉落实际拿不到，净金币为纯药水亏损。<br>
     💡 <b>击杀/分</b> 按游戏官方公式：60 ÷ (加权HP ÷ 每回合输出)，上限60（每秒1回合）。<br>
@@ -4670,8 +4680,8 @@ const SIM_DEFAULT_TURNS = 3000; // 模拟回合数（1回合=1秒，3000回合�
 const SIM_HP_THRESHOLD = 0.7;   // 原版默认：HP<70% 自动喝红药
 const SIM_MP_THRESHOLD = 0.3;   // 原版默认：MP<30% 自动喝蓝药
 
-// 药水候选缓存：AI 选药每回合最多触发2次×数千回合×上百图，
-// 不能每次都全量扫描+过滤 ITEMS（这是模拟卡顿的主要来源）
+// 药水候选缓存：AI选药每回合都可能调用，不能每次都全量扫描+过滤+排序 ITEMS（模拟卡顿主因）。
+// 预按恢复量升序，AI选"最贴合缺口"用线性最近邻+ affordability 双侧游走，零分配。
 let _potionCands = null;
 function getPotionCands() {
   if (!_potionCands) {
@@ -4681,9 +4691,29 @@ function getPotionCands() {
       if (info.healHp) hp.push(info);        // 含太阳水类（HP优先归红药）
       else if (info.healMp) mp.push(info);
     }
+    hp.sort((a, b) => a.healHp - b.healHp);
+    mp.sort((a, b) => a.healMp - b.healMp);
     _potionCands = { hp, mp };
   }
   return _potionCands;
+}
+
+// AI选药（复刻 _resolveAutoPotion auto 的排序语义：|恢复量-缺口| 升序，并列取原顺序=低档药在前，
+// 取第一个买得起的）。list 已按恢复量升序，最近邻向两侧游走等价于该排序。
+function aiPickPotion(list, key, missing, gold) {
+  let nearest = 0;
+  for (let i = 1; i < list.length; i++) {
+    if (Math.abs(list[i][key] - missing) < Math.abs(list[nearest][key] - missing)) nearest = i;
+  }
+  let l = nearest, r = nearest + 1;
+  while (l >= 0 || r < list.length) {
+    let pick;
+    if (l < 0) pick = r++;
+    else if (r >= list.length) pick = l--;
+    else pick = Math.abs(list[l][key] - missing) <= Math.abs(list[r][key] - missing) ? l-- : r++;
+    if (gold >= (list[pick].price || 0)) return list[pick];
+  }
+  return null;
 }
 
 function simulateMap(map, player, stats, parts, opts) {
@@ -4769,19 +4799,20 @@ function simulateMap(map, player, stats, parts, opts) {
   };
   const hit = (m, dmg) => { m.cur -= dmg; if (m.cur <= 0 && !m.dead) { m.dead = true; onKill(m); } };
 
-  // AI 选药（复刻 _resolveAutoPotion auto 模式：恢复量最贴合缺口；金币不足自动降级）
+  // 喝药（复刻 _resolveAutoPotion）：AI自选=恢复量最贴合缺口（付全价、按缺口封顶回复，
+  // 缺口89喝100的药就是浪费11血的钱，与游戏一致）；固定档位=只买指定药水（配自然阈值可零浪费）
+  const hpPolicy = opts.hpPotion || "auto";
+  const mpPolicy = opts.mpPotion || "auto";
   const drinkPotion = (kind, cur, max) => {
     const missing = max - cur;
     const key = kind === "hp" ? "healHp" : "healMp";
-    const cands = (kind === "hp" ? getPotionCands().hp : getPotionCands().mp).slice();
-    cands.sort((a, b) => Math.abs(a[key] - missing) - Math.abs(b[key] - missing));
-    for (const info of cands) {
-      if (simGold >= (info.price || 0)) {
-        simGold -= info.price || 0; potGold += info.price || 0;
-        return Math.min(info[key], missing);
-      }
-    }
-    return 0;
+    const policy = kind === "hp" ? hpPolicy : mpPolicy;
+    const info = policy !== "auto" && ITEMS[policy]
+      ? ITEMS[policy]
+      : aiPickPotion(kind === "hp" ? getPotionCands().hp : getPotionCands().mp, key, missing, simGold);
+    if (!info || simGold < (info.price || 0)) return 0;
+    simGold -= info.price || 0; potGold += info.price || 0;
+    return Math.min(info[key], missing);
   };
 
   const autoHeal = () => {
@@ -4959,6 +4990,8 @@ function simulateMap(map, player, stats, parts, opts) {
   return {
     turns: TURNS,
     hpThreshold: HP_TH,
+    mpThreshold: MP_TH,
+    hpPotion: hpPolicy, mpPotion: mpPolicy,
     killsPerMin: Math.round(kills / minutes * 10) / 10,
     bossKillsPerHour: Math.round(bossKills / (TURNS / 3600) * 10) / 10,
     expPerMin: Math.round(expGain / minutes),
@@ -5084,26 +5117,89 @@ function renderPlayer(player, stats, dps, mpPerTurn, singleAtkSkills) {
   document.getElementById("player-card").innerHTML = html;
 }
 
-// 模拟选项：从页面控件读取（选"自动优化"时逐图扫描阈值网格；手动值需与游戏内一致）
+// 模拟选项：从页面控件读取（选"自动优化"时逐图扫描阈值×药水策略；手动值需与游戏内一致）
 function getSimOptions() {
   const hpSel = document.getElementById("sim-hp-threshold");
   const v = hpSel ? hpSel.value : "0.7";
+  const potSel = document.getElementById("sim-hp-potion");
   return {
     autoThreshold: v === "auto",
     hpThreshold: v === "auto" ? null : parseFloat(v),
+    hpPotion: potSel ? potSel.value : "auto",
     mpThreshold: 0.3,
   };
 }
 
-// 喝药阈值寻优：经验/分最优阈值（并列取净金高、再取阈值高=更安全）
-const THRESHOLD_GRID = [0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2];
-const SWEEP_TURNS = 1800; // 寻优扫描回合数（选中最优后再按全长度复算）
-const SAFE_DEATHS_PER_HOUR = 30; // 「可挂机」死亡上限：经验方案只在死亡≤30/时的档位里选，
-// 否则会推荐"送死流"低阈值（死亡重置波次跳过低经验密度的大血量BOSS，经验反而虚高）
+// 药水简称（展示用）
+const POTION_SHORT = {
+  auto: "AI",
+  "金创药(小量)": "小量", "金创药(中量)": "中量", "金创药(大量)": "大量",
+  "强效金创药": "强效", "金创药(特量)": "特量",
+  "魔法药(小量)": "小蓝", "魔法药(中量)": "中蓝", "魔法药(大量)": "大蓝",
+  "强效魔法药": "强蓝", "魔法药(特量)": "特蓝",
+};
+
+// 喝药策略寻优：
+// - AI自选 × 阈值网格8档（AI按缺口选最贴合的药，付全价按缺口封顶，存在过量浪费）
+// - 固定药水 × 自然阈值（缺口=药水量时喝，零浪费）+ 安全边际档（更早喝防猝死）
+// 自然阈值 T = 1 − 药水量/满血，即 HP<T 时缺口刚超过药水量
+const THRESHOLD_GRID = [0.9, 0.8, 0.7, 0.55, 0.4, 0.25];
+const HP_POTION_NAMES = ["金创药(小量)", "金创药(中量)", "金创药(大量)", "强效金创药", "金创药(特量)"];
+const MP_POTION_NAMES = ["魔法药(小量)", "魔法药(中量)", "魔法药(大量)"];
+const SWEEP_TURNS = 1200; // 寻优扫描回合数（选中最优后再按全长度复算）
+const SAFE_DEATHS_PER_HOUR = 30; // 「可挂机」死亡上限：经验/boss方案都在死亡≤30/时的档位里选，
+// 否则会推荐"送死流"低阈值（死亡重置波次跳过低经验密度的大血量BOSS或反复重rollboss，指标虚高）
+
+const clampTh = t => Math.max(0.05, Math.min(0.95, Math.round(t * 100) / 100));
+
+// 确定性随机（每图固定种子）：同一图每次计算结果一致；且同图各策略组合共用同一条
+// 随机流（同波次构成/同伤害序列，只差喝药策略），显著降低策略间对比方差
+function mulberry32(a) {
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function mapSeed(map) {
+  let h = 0;
+  const s = String(map.id || map.name);
+  for (let i = 0; i < s.length; i++) h = (Math.imul(h, 31) + s.charCodeAt(i)) | 0;
+  return (h ^ 0x9E3779B9) >>> 0;
+}
+
+function buildHpCombos(stats) {
+  const combos = THRESHOLD_GRID.map(th => ({ th, potion: "auto" }));
+  for (const name of HP_POTION_NAMES) {
+    const heal = ITEMS[name].healHp;
+    if (heal > stats.maxHp * 0.9) continue; // 药水量接近/超过满血：钳到5%阈值=送死，不纳入
+    combos.push({ th: clampTh(1 - heal / stats.maxHp), potion: name }); // 零浪费档
+  }
+  return combos;
+}
+
+function buildMpCombos(stats) {
+  const combos = [{ th: 0.3, potion: "auto" }]; // 游戏默认
+  for (const name of MP_POTION_NAMES) {
+    const heal = ITEMS[name].healMp;
+    if (heal > stats.maxMp * 0.9) continue;
+    combos.push({ th: clampTh(1 - heal / stats.maxMp), potion: name });
+  }
+  return combos;
+}
 
 function pickBestSim(sims, metric, maxDeaths) {
-  let pool = typeof maxDeaths === "number" ? sims.filter(s => s.deathsPerHour <= maxDeaths) : sims;
-  if (pool.length === 0) pool = sims;
+  let pool = sims;
+  if (typeof maxDeaths === "number") {
+    pool = sims.filter(s => s.deathsPerHour <= maxDeaths);
+    if (pool.length === 0) {
+      // 全部超过死亡上限：放宽到最低死亡档的1.5倍以内再取最优（避免推荐极端送死流）
+      const minD = Math.min(...sims.map(s => s.deathsPerHour));
+      pool = sims.filter(s => s.deathsPerHour <= minD * 1.5 + 1e-9);
+      if (pool.length === 0) pool = sims;
+    }
+  }
   let best = null;
   for (const s of pool) {
     if (!best) { best = s; continue; }
@@ -5115,28 +5211,54 @@ function pickBestSim(sims, metric, maxDeaths) {
   return best;
 }
 
-// 单图计算：自动模式下扫描阈值网格，主值=经验最优阈值；boss图另算boss击杀最优阈值
+// 单图计算：自动模式下扫描 红药策略(阈值×药水) → 蓝药策略 → 满长度复算；boss图另算boss最优策略
 function calcMapWithSims(map, player, stats, dps, mpPerTurn, parts, simOpts) {
   const r = calcMap(map, player, stats, dps, mpPerTurn, parts);
   const hasBoss = map.monsters.some(mm => MONSTERS[mm.name] && MONSTERS[mm.name].type === "boss");
+  const seeded = extra => ({ rng: mulberry32(mapSeed(map)), ...simOpts, ...extra });
   if (!simOpts.autoThreshold || r.locked) {
-    // 手动阈值 / 等级不足的图：不寻优，直接按当前设置模拟
-    r.sim = simulateMap(map, player, stats, parts, {
-      ...simOpts, hpThreshold: simOpts.hpThreshold || 0.7,
-    });
+    // 手动策略 / 等级不足的图：不寻优，直接按当前设置模拟
+    r.sim = simulateMap(map, player, stats, parts, seeded({
+      hpThreshold: simOpts.hpThreshold || 0.7,
+    }));
     r.simSweep = null;
     return r;
   }
-  const sims = THRESHOLD_GRID.map(th => simulateMap(map, player, stats, parts, {
-    ...simOpts, turns: SWEEP_TURNS, hpThreshold: th,
+  // 1) 红药策略扫描（蓝药先按游戏默认 AI@30%）
+  const hpSims = buildHpCombos(stats).map(c => simulateMap(map, player, stats, parts, seeded({
+    turns: SWEEP_TURNS, hpThreshold: c.th, hpPotion: c.potion,
+  })));
+  const bestHp = pickBestSim(hpSims, "expPerMin", SAFE_DEATHS_PER_HOUR);
+  // 2) 蓝药策略：固定最优红药下扫描（按净金选，需明显更优才替换默认AI@30%，防噪声翻转）；
+  //    无蓝耗职业（无触发技能且解析蓝耗为0）跳过
+  const mpCombos = buildMpCombos(stats);
+  const mpSims = mpPerTurn <= 0 && !(player.equippedSkills || []).some(sk => SKILLS[sk] && SKILLS[sk].delay > 0)
+    ? [{ ...bestHp }] // 占位：沿用红药最优那次扫描结果对应的默认蓝药
+    : mpCombos.map(c => simulateMap(map, player, stats, parts, seeded({
+        turns: SWEEP_TURNS,
+        hpThreshold: bestHp.hpThreshold, hpPotion: bestHp.hpPotion,
+        mpThreshold: c.th, mpPotion: c.potion,
+      })));
+  let bestMp = mpSims[0];
+  for (const s of mpSims.slice(1)) if (s.netGoldPerMin > bestMp.netGoldPerMin * 1.02) bestMp = s;
+  // 3) 满长度复算主方案
+  r.sim = simulateMap(map, player, stats, parts, seeded({
+    hpThreshold: bestHp.hpThreshold, hpPotion: bestHp.hpPotion,
+    mpThreshold: bestMp.mpThreshold, mpPotion: bestMp.mpPotion,
   }));
-  r.simSweep = sims;
-  const bestExp = pickBestSim(sims, "expPerMin", SAFE_DEATHS_PER_HOUR);
-  r.sim = simulateMap(map, player, stats, parts, { ...simOpts, hpThreshold: bestExp.hpThreshold });
+  r.simSweep = hpSims; r.simSweepMp = mpSims;
   if (hasBoss) {
-    const bestBoss = pickBestSim(sims, "bossKillsPerHour");
-    r.bossSim = bestBoss.hpThreshold === bestExp.hpThreshold ? r.sim
-      : simulateMap(map, player, stats, parts, { ...simOpts, hpThreshold: bestBoss.hpThreshold });
+    const bestBoss = pickBestSim(hpSims, "bossKillsPerHour", SAFE_DEATHS_PER_HOUR);
+    const same = bestBoss.hpThreshold === bestHp.hpThreshold && bestBoss.hpPotion === bestHp.hpPotion;
+    if (!same) {
+      const bossSim = simulateMap(map, player, stats, parts, seeded({
+        hpThreshold: bestBoss.hpThreshold, hpPotion: bestBoss.hpPotion,
+        mpThreshold: bestMp.mpThreshold, mpPotion: bestMp.mpPotion,
+      }));
+      // 终值校验：boss方案必须在满长度复算中严格优于经验方案才展示（防扫描噪声翻转）
+      if (bossSim.bossKillsPerHour > r.sim.bossKillsPerHour) r.bossSim = bossSim;
+    }
+    if (!r.bossSim) r.bossSim = r.sim;
   }
   return r;
 }
@@ -5234,15 +5356,16 @@ function renderRow(r, idx) {
       })()
     : '<span style="color:#888">-</span>';
 
-  // 喝药阈值推荐：主值=经验最优；boss图若boss最优阈值不同，追加 🐲标记
+  // 喝药策略推荐：主值=经验最优（阈值+药水档位）；boss图若boss最优策略不同，追加 🐲标记
   const thPct = th => Math.round(th * 100) + "%";
   const potionCell = r.sim
     ? (() => {
         const expTh = thPct(r.sim.hpThreshold || 0.7);
+        const expPot = POTION_SHORT[r.sim.hpPotion] || "AI";
         const auto = r.simSweep ? "自动寻优" : "手动设置";
-        let html = `<span style="font-weight:600" title="${auto}：HP&lt;${expTh} 喝药（AI自选药水），主列为该阈值下的模拟值">${expTh}</span>`;
+        let html = `<span style="font-weight:600" title="${auto}：HP&lt;${expTh} 喝${expPot === "AI" ? "药（AI自选）" : "红药(" + expPot + ")"}，主列为该策略下的模拟值">${expTh}·${expPot}</span>`;
         if (r.bossSim && r.bossSim !== r.sim && r.bossSim.bossKillsPerHour > 0)
-          html += ` <span style="color:#ffb74d;font-size:11px" title="想多杀BOSS：改用 ${thPct(r.bossSim.hpThreshold)}（boss击杀 ${r.bossSim.bossKillsPerHour}/时 vs ${r.sim.bossKillsPerHour}/时），详见展开行">🐲${thPct(r.bossSim.hpThreshold)}</span>`;
+          html += ` <span style="color:#ffb74d;font-size:11px" title="想多杀BOSS：改用 ${thPct(r.bossSim.hpThreshold)}·${POTION_SHORT[r.bossSim.hpPotion] || "AI"}（boss击杀 ${r.bossSim.bossKillsPerHour}/时 vs ${r.sim.bossKillsPerHour}/时），详见展开行">🐲${thPct(r.bossSim.hpThreshold)}·${POTION_SHORT[r.bossSim.hpPotion] || "AI"}</span>`;
         return html;
       })()
     : '<span style="color:#888">-</span>';
@@ -5270,7 +5393,7 @@ function renderDetail(r) {
     ? `<div style="margin-bottom:10px;color:#ef9a9a;">⚠️ 危险怪物: ${r.dangerMonsters.map(d => `${d.name}(L${d.lv},打${d.dmg}/击,扛${d.survive})×${d.count}`).join("， ")}</div>`
     : "";
   const simInfo = r.sim
-    ? `<div style="margin-bottom:10px;color:#ce93d8;">🎲 蒙特卡洛模拟（${r.sim.turns}回合≈${Math.round(r.sim.turns/60)}分钟游戏时间，主列数值即模拟结果，喝药 HP&lt;${Math.round((r.sim.hpThreshold||0.7)*100)}% AI自选）：死亡 <b>${r.sim.deathsPerHour}/时</b>（共${r.sim.deaths}次），实际击杀 ${r.sim.killsPerMin}/分、经验 ${r.sim.expPerMin.toLocaleString()}/分、毛金币 ${r.sim.dropGoldPerMin.toLocaleString()}金/分（含掉落药半价卖店、扣死亡损失）、药费 ${r.sim.potGoldPerMin.toLocaleString()}金/分、净金 ${r.sim.netGoldPerMin.toLocaleString()}金/分。解析式(无死亡)经验 ${r.expPerMin.toLocaleString()}/分${r.sim.expPerMin < r.expPerMin * 0.8 ? '，模拟受死亡拖累明显低于解析值' : ''}</div>`
+    ? `<div style="margin-bottom:10px;color:#ce93d8;">🎲 蒙特卡洛模拟（${r.sim.turns}回合≈${Math.round(r.sim.turns/60)}分钟游戏时间，主列数值即模拟结果，喝药 HP&lt;${Math.round((r.sim.hpThreshold||0.7)*100)}%·${POTION_SHORT[r.sim.hpPotion] || "AI"}，蓝药 MP&lt;${Math.round((r.sim.mpThreshold||0.3)*100)}%·${POTION_SHORT[r.sim.mpPotion] || "AI"}）：死亡 <b>${r.sim.deathsPerHour}/时</b>（共${r.sim.deaths}次），实际击杀 ${r.sim.killsPerMin}/分、经验 ${r.sim.expPerMin.toLocaleString()}/分、毛金币 ${r.sim.dropGoldPerMin.toLocaleString()}金/分（含掉落药半价卖店、扣死亡损失）、药费 ${r.sim.potGoldPerMin.toLocaleString()}金/分、净金 ${r.sim.netGoldPerMin.toLocaleString()}金/分。解析式(无死亡)经验 ${r.expPerMin.toLocaleString()}/分${r.sim.expPerMin < r.expPerMin * 0.8 ? '，模拟受死亡拖累明显低于解析值' : ''}</div>`
     : "";
   const potionInfo = renderPotionDetail(r);
   const lethalInfo = r.lethal
@@ -5286,26 +5409,31 @@ function renderDetail(r) {
   return danger + simInfo + potionInfo + lethalInfo + goldInfo + mpInfo + hpInfo + drops;
 }
 
-// 喝药阈值方案详情：自动寻优给出对比表 + boss图给多杀boss的备选方案
+// 喝药策略详情：自动寻优给出阈值×药水对比表 + 蓝药建议 + boss图备选方案
 function renderPotionDetail(r) {
   const thPct = th => Math.round(th * 100) + "%";
+  const pot = p => POTION_SHORT[p] || "AI";
   if (!r.simSweep) {
-    return `<div style="margin-bottom:10px;color:#a5d6ff;">💊 喝药阈值：手动 ${r.sim ? thPct(r.sim.hpThreshold || 0.7) : "70%"}（AI自选药水；切换为「自动优化」可逐图寻优）</div>`;
+    return `<div style="margin-bottom:10px;color:#a5d6ff;">💊 喝药策略：手动 ${r.sim ? thPct(r.sim.hpThreshold || 0.7) + "·" + pot(r.sim.hpPotion) : "70%·AI"}（切换为「自动优化」可逐图寻优阈值+药水档位）</div>`;
   }
-  const expTh = r.sim.hpThreshold || 0.7;
+  const expTh = r.sim.hpThreshold || 0.7, expPot = r.sim.hpPotion || "auto";
   const rows = r.simSweep.map(s => {
-    const isExp = s.hpThreshold === expTh;
-    const isBoss = r.bossSim && r.bossSim !== r.sim && s.hpThreshold === r.bossSim.hpThreshold;
+    const isExp = s.hpThreshold === expTh && s.hpPotion === expPot;
+    const isBoss = r.bossSim && r.bossSim !== r.sim && s.hpThreshold === r.bossSim.hpThreshold && s.hpPotion === r.bossSim.hpPotion;
     const mark = isExp ? " 👈经验最优" : (isBoss ? " 🐲boss最优" : "");
     const style = isExp ? "color:#4caf50;font-weight:600" : (isBoss ? "color:#ffb74d" : "");
-    return `<tr${style ? ` style="${style}"` : ""}><td>${thPct(s.hpThreshold)}</td><td>${s.deathsPerHour}</td><td>${s.killsPerMin}</td><td>${s.expPerMin.toLocaleString()}</td><td>${s.potGoldPerMin.toLocaleString()}</td><td>${s.netGoldPerMin.toLocaleString()}</td><td>${s.bossKillsPerHour}</td><td>${mark}</td></tr>`;
+    return `<tr${style ? ` style="${style}"` : ""}><td>${thPct(s.hpThreshold)}</td><td>${pot(s.hpPotion)}</td><td>${s.deathsPerHour}</td><td>${s.killsPerMin}</td><td>${s.expPerMin.toLocaleString()}</td><td>${s.potGoldPerMin.toLocaleString()}</td><td>${s.netGoldPerMin.toLocaleString()}</td><td>${s.bossKillsPerHour}</td><td>${mark}</td></tr>`;
   }).join("");
-  let html = `<div style="margin-bottom:6px;color:#a5d6ff;">💊 喝药阈值寻优（HP阈值扫描 × ${r.simSweep.length}档，AI自选药水，MP阈值固定30%游戏默认）→ 推荐 <b>${thPct(expTh)}</b>（在死亡≤${SAFE_DEATHS_PER_HOUR}/时的"可挂机"档位中取经验最优，避免推荐靠死亡重置波次刷经验的送死流）</div>
-  <table class="db-table" style="margin-bottom:10px;font-size:12px;"><thead><tr><th>阈值</th><th>死亡/时</th><th>击杀/分</th><th>经验/分</th><th>药费/分</th><th>净金/分</th><th>boss/时</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
+  let html = `<div style="margin-bottom:6px;color:#a5d6ff;">💊 红药策略寻优（阈值×药水档位 × ${r.simSweep.length}组合，扫描${SWEEP_TURNS}回合；固定药水配"自然阈值"=缺口等于药水量时喝，零过量浪费）→ 推荐 <b>${thPct(expTh)}·${pot(expPot)}</b>（在死亡≤${SAFE_DEATHS_PER_HOUR}/时的"可挂机"档位中取经验最优）</div>
+  <table class="db-table" style="margin-bottom:6px;font-size:12px;"><thead><tr><th>阈值</th><th>红药</th><th>死亡/时</th><th>击杀/分</th><th>经验/分</th><th>药费/分</th><th>净金/分</th><th>boss/时</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
+  // 蓝药建议（净金口径，需比默认 AI@30% 明显更优才换）
+  const m = r.sim;
+  const mpTxt = `💧 蓝药建议：${thPct(m.mpThreshold || 0.3)}·${pot(m.mpPotion)}（净金 ${m.netGoldPerMin.toLocaleString()}/分${r.simSweepMp && r.simSweepMp[0] ? "，vs 默认AI@30% " + r.simSweepMp[0].netGoldPerMin.toLocaleString() + "/分" : ""}）`;
+  html += `<div style="margin-bottom:10px;color:#90caf9;">${mpTxt}</div>`;
   if (r.bossSim && r.bossSim !== r.sim && r.bossSim.bossKillsPerHour > 0) {
     const b = r.bossSim, e = r.sim;
     const gain = e.bossKillsPerHour > 0 ? Math.round((b.bossKillsPerHour / e.bossKillsPerHour - 1) * 100) : null;
-    html += `<div style="margin-bottom:10px;color:#ffb74d;">🐲 想多杀BOSS：把游戏内 HP喝药阈值 改为 <b>${thPct(b.hpThreshold)}</b> —— boss击杀 ${b.bossKillsPerHour}/时（经验方案 ${thPct(e.hpThreshold)} 为 ${e.bossKillsPerHour}/时${gain !== null ? "，+" + gain + "%" : ""}），死亡 ${e.deathsPerHour}→${b.deathsPerHour}/时；代价：经验 ${e.expPerMin.toLocaleString()}→${b.expPerMin.toLocaleString()}/分、净金 ${e.netGoldPerMin.toLocaleString()}→${b.netGoldPerMin.toLocaleString()}金/分</div>`;
+    html += `<div style="margin-bottom:10px;color:#ffb74d;">🐲 想多杀BOSS：把游戏内喝药改为 <b>${thPct(b.hpThreshold)}·${pot(b.hpPotion)}</b> —— boss击杀 ${b.bossKillsPerHour}/时（经验方案为 ${e.bossKillsPerHour}/时${gain !== null ? "，+" + gain + "%" : ""}），死亡 ${e.deathsPerHour}→${b.deathsPerHour}/时；代价：经验 ${e.expPerMin.toLocaleString()}→${b.expPerMin.toLocaleString()}/分、净金 ${e.netGoldPerMin.toLocaleString()}→${b.netGoldPerMin.toLocaleString()}金/分</div>`;
   }
   return html;
 }

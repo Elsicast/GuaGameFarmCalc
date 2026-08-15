@@ -25,7 +25,7 @@
         <option value="10" selected>10只</option>
       </select>
     </label>
-    <label style="display:flex;align-items:center;gap:4px;font-size:13px;color:#b0bec5" title="游戏内「自动喝药」的HP阈值设置（游戏里可自由输入1-99%）。选「自动优化」则每张图自动扫描各阈值并推荐最优（主列为最优阈值下的模拟值）；手动值需与游戏内一致，否则模拟死亡/时失真">HP喝药阈值
+    <label style="display:flex;align-items:center;gap:4px;font-size:13px;color:#b0bec5" title="游戏内「自动喝药」的HP阈值设置（游戏里可自由输入1-99%）。选「自动优化」则每张图自动扫描 阈值×药水档位 并推荐最优（主列为最优策略下的模拟值）；手动值需与游戏内一致，否则模拟死亡/时失真">HP喝药阈值
       <select id="sim-hp-threshold" onchange="loadAndCalc()">
         <option value="auto" selected>🎯自动优化</option>
         <option value="0.9">90%</option>
@@ -35,6 +35,16 @@
         <option value="0.4">40%</option>
         <option value="0.3">30%</option>
         <option value="0.15">15%</option>
+      </select>
+    </label>
+    <label style="display:flex;align-items:center;gap:4px;font-size:13px;color:#b0bec5" title="红药档位（游戏内 hpPotion 设置）。AI自选=按缺口选最贴合的药（会有过量浪费，如缺89喝100）；固定档位配自然阈值可零浪费。自动优化模式下此选择被忽略">红药
+      <select id="sim-hp-potion" onchange="loadAndCalc()">
+        <option value="auto" selected>AI自选</option>
+        <option value="金创药(小量)">小量(30HP/50金)</option>
+        <option value="金创药(中量)">中量(60HP/100金)</option>
+        <option value="金创药(大量)">大量(100HP/200金)</option>
+        <option value="强效金创药">强效(200HP/500金)</option>
+        <option value="金创药(特量)">特量(400HP/1000金)</option>
       </select>
     </label>
   </div>
@@ -56,7 +66,7 @@
   </div>
   <p class="hint">
     💡 主列（击杀/经验/金币/净金）均为<b>蒙特卡洛模拟值</b>（受死亡拖累的真实收益），悬停可看解析式对比；计算分批进行，排名随进度实时刷新。<br>
-    💡 <b>喝药🎯列</b>=该图最优HP喝药阈值（自动寻优，AI自选药水），带 🐲 的为"多杀BOSS"备选阈值，展开行有各阈值完整对比。<br>
+    💡 <b>喝药🎯列</b>=该图最优喝药策略（阈值·红药档位，自动寻优；固定药配"自然阈值"可做到零过量浪费），带 🐲 的为"多杀BOSS"备选，展开行有完整对比表与蓝药建议。<br>
     💡 <b>净金币</b> = 金币掉落 + 掉落药半价卖出 − 蓝药费 − 红药费（药钱按消耗全价单独计算，掉落药不抵扣药费；模拟值另含死亡掉金损失）。<br>
     💡 带 <span style="color:#ff9800">*</span> 的数字表示该图<b>扛不到杀死怪就死</b>，经验/掉落实际拿不到，净金币为纯药水亏损。<br>
     💡 <b>击杀/分</b> 按游戏官方公式：60 ÷ (加权HP ÷ 每回合输出)，上限60（每秒1回合）。<br>
