@@ -1597,9 +1597,16 @@ function recommendEquip(job, tierLv) {
     });
     // 排序：输出类槽位(武器/戒指/项链)按主属性上限；防具类(衣服/头盔/手镯/鞋子/腰带/宝玉)按物防优先
     // 注：承伤公式(app.js calcMap 第288行)只用 minDef/maxDef 物防，magDef 不参与减伤 → 防具优先堆物防
+    // 道士例外：隐身+宝宝承伤时玩家几乎零承伤(game.js 怪物反击分支)，防具槽优先堆道术——
+    // SC 喂宝宝血量/攻击与全部 DOT/溅射通道，物防只小幅降低宝宝承伤，无道术装备时回落物防口径
     const isDefSlot = ["armor", "helmet", "bracelet", "boots", "belt", "jade"].includes(slot.type);
+    const scFirst = job === "taoist" && isDefSlot;
     const sorted = candidates.sort((a, b) => {
       if (isDefSlot) {
+        if (scFirst) {
+          const sa = a[1][mainStat] ? a[1][mainStat][1] : 0, sb = b[1][mainStat] ? b[1][mainStat][1] : 0;
+          if (sb !== sa) return sb - sa;
+        }
         // 物防上限优先；物防相同再比魔防（聊胜于无）
         const da = a[1].def ? a[1].def[1] : 0, db_ = b[1].def ? b[1].def[1] : 0;
         if (db_ !== da) return db_ - da;
@@ -1615,6 +1622,8 @@ function recommendEquip(job, tierLv) {
     const picks = [];
     // 手镯双槽特殊处理：1个攻击型(主属性最高) + 1个物防型(物防最高)，物防/魔防互补不重复
     // 理由：手镯是少数能加主属性的防具槽，攻击型价值高；承伤只算物防，防御位选物防最实用
+    // 道士例外：双槽同名道术手镯×2（SC 喂宝宝血量/攻击与全部 DOT/溅射通道，
+    // 且高阶道术手镯自带物防如天尊手镯 防1-2，×2 严格优于攻防互补；战士/法师直接承伤保持互补）
     if (slot.type === "bracelet" && slot.count === 2) {
       // 攻击型：按主属性上限排序
       const byAtk = [...candidates].sort((a, b) => {
@@ -1622,6 +1631,8 @@ function recommendEquip(job, tierLv) {
         const vb = b[1][mainStat] ? b[1][mainStat][1] : -1;
         return vb - va;
       });
+      // 是否存在真正的攻击型手镯（主属性上限≥1）？没有则双槽都按物防选
+      const hasAtkBracelet = byAtk.length > 0 && (byAtk[0][1][mainStat] ? byAtk[0][1][mainStat][1] : 0) >= 1;
       // 物防型：按物防上限排序（跳过已选的攻击型同名件）
       const byDef = [...candidates].sort((a, b) => {
         const da = a[1].def ? a[1].def[1] : 0, db_ = b[1].def ? b[1].def[1] : 0;
@@ -1634,9 +1645,14 @@ function recommendEquip(job, tierLv) {
           special: it.special || null, equipLv: it.level || 0,
           dropLv: mdl != null ? mdl : (it.level || tierLv), dup: false };
       };
-      // 是否存在真正的攻击型手镯（主属性上限≥1）？没有则双槽都按物防选
-      const hasAtkBracelet = byAtk.length > 0 && (byAtk[0][1][mainStat] ? byAtk[0][1][mainStat][1] : 0) >= 1;
-      if (hasAtkBracelet) {
+      if (job === "taoist" && hasAtkBracelet) {
+        // 道士：存在道术手镯时双槽同名×2（同戒指口径；高阶道术手镯自带物防，×2 严格优于攻防互补）
+        const [name, it] = byAtk[0];
+        const mdl = minDropLv(name);
+        const pick = { name, item: it, mainVal: it[mainStat][1], special: it.special || null,
+          equipLv: it.level || 0, dropLv: mdl != null ? mdl : (it.level || tierLv), dup: true };
+        picks.push(pick, pick);
+      } else if (hasAtkBracelet) {
         const atkPick = mkPick(byAtk[0]);
         picks.push(atkPick);
         // 第二个：物防型，优先选与攻击型不同的装备；若候选不足则回落同名×2
@@ -1728,11 +1744,12 @@ function recommendSkills(job, tierLv, slots, stats) {
       const defBuff = buffs.find(e => e[1].damageBonus > 0);
       if (defBuff && !full()) push(defBuff, "减伤" + Math.round(defBuff[1].damageBonus * 100) + "%");
     }
-    // 施毒术（道士核心 DOT，独立通道）
+    // AOE DOT（瘟疫/毒云）：全场溅射+独立DOT通道，优先于施毒术
+    // （毒云 DOT 与施毒同公式且加成0.40>0.20、作用全场，解锁后施毒术让位）
+    for (const e of aoeAttacks) { if (full()) break; push(e, "AOE输出"); }
+    // 施毒术（道士核心 DOT，独立通道）——AOE毒未解锁时的过渡输出
     const poison = singleAttacks.find(e => e[0] === "施毒术");
     if (poison && !full()) push(poison, "持续毒伤");
-    // AOE DOT（瘟疫/毒云）
-    for (const e of aoeAttacks) { if (full()) break; push(e, "AOE输出"); }
     if (singleAttacks.length > 0 && !full()) {
       const main = singleAttacks.find(e => e[0] !== "施毒术") || singleAttacks[0];
       push(main, "单体输出");
