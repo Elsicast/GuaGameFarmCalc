@@ -66,10 +66,11 @@ function getDamageParts(player, stats) {
   const scBase = stats.maxSc > 0 ? stats.maxSc : stats.maxAtk;
 
   // === delay>0 触发型技能：平均每回合贡献（法/道魔法段含「召唤/治疗也放大魔法段」quirk）===
+  // 冷却周期 = delay+1（触发→重置 delay→逐回合递减到 0 才能再触发，原版 processSkillCooldowns）
   let avgTriggered = 0, stealthDelay = 0;
   for (const sk of equipped) {
     const sd = SKILLS[sk]; if (!sd || !sd.delay) continue;
-    avgTriggered += sd.damageBonus / sd.delay; // 平均每回合
+    avgTriggered += sd.damageBonus / (sd.delay + 1); // 平均每回合
     if (sk === "隐身术" || sk === "集体隐身术") stealthDelay = sd.delay;
   }
 
@@ -124,11 +125,12 @@ function getDamageParts(player, stats) {
   }
   // 召唤群攻（每只怪每回合承受所有宝宝各1份，不扣防）
   const summonPerMon = summonBonusSum > 0 ? Math.max(1, Math.floor(scBase * summonBonusSum * 2.0)) : 0;
-  // 毒DOT（不扣防）：施毒术只主目标；瘟疫/毒云每只
-  let poisonSingle = 0, poisonAoEPerMon = 0;
-  if (equipped.includes("施毒术")) poisonSingle = Math.max(1, Math.floor(scBase * 0.20 * 0.6));     // SC×0.12
-  if (equipped.includes("瘟疫")) poisonAoEPerMon += Math.max(1, Math.floor(scBase * 0.55 * 0.6));   // SC×0.33
-  if (equipped.includes("毒云")) poisonAoEPerMon += Math.max(1, Math.floor(scBase * 0.40 * 0.6));   // SC×0.24
+  // 毒DOT（不扣防）：施毒术/瘟疫/毒云在原版都只给主目标上毒（playerPoisonApply(mon)，
+  // 3回合刷新），"瘟疫/毒云伤害全场"由 AOE 溅射通道承担（已计入 aoeSplashPerMon），不重复算
+  let poisonSingle = 0;
+  if (equipped.includes("施毒术")) poisonSingle += Math.max(1, Math.floor(scBase * 0.20 * 0.6)); // SC×0.12
+  if (equipped.includes("瘟疫")) poisonSingle += Math.max(1, Math.floor(scBase * 0.55 * 0.6));   // SC×0.33
+  if (equipped.includes("毒云")) poisonSingle += Math.max(1, Math.floor(scBase * 0.40 * 0.6));   // SC×0.24
 
   // --- 特殊装备（主目标）---
   let specialSingle = 0;
@@ -138,11 +140,11 @@ function getDamageParts(player, stats) {
 
   // --- 承伤分摊：召唤宝宝 / 隐身术 ---
   const hasMinion = summonBonusSum > 0 || rings.includes("记忆") || equipped.includes("诱惑之光");
-  // 隐身覆盖率：触发后6回合隐身，delay周期触发 → min(1, 6/delay)；隐身需有宝宝承接仇恨
-  const stealthUptime = (stealthDelay > 0 && hasMinion) ? Math.min(1, 6 / stealthDelay) : 0;
+  // 隐身覆盖率：触发后6回合隐身，冷却周期 delay+1 → min(1, 6/(delay+1))；隐身需有宝宝承接仇恨
+  const stealthUptime = (stealthDelay > 0 && hasMinion) ? Math.min(1, 6 / (stealthDelay + 1)) : 0;
 
   return { job, physSingleBase, warriorMult, normalPassive, magicSingleBase, magicBonus,
-           aoeBonus, aoeSplashPerMon, summonPerMon, poisonAoEPerMon, poisonSingle, specialSingle,
+           aoeBonus, aoeSplashPerMon, summonPerMon, poisonSingle, specialSingle,
            hasMinion, stealthUptime };
 }
 
@@ -162,7 +164,7 @@ function aoeDmgToMon(parts, mon) {
     const phys = Math.max(1, physFinal - (mon.minDef || 0) * 0.6);
     splash = Math.max(1, Math.floor(phys * parts.aoeBonus * 0.5));
   }
-  return Math.floor(splash + parts.summonPerMon + parts.poisonAoEPerMon);
+  return Math.floor(splash + parts.summonPerMon);
 }
 
 // 兼容展示：主目标打0防怪时每回合承受的总量（单点流 + AOE流份），用于玩家卡片
@@ -208,11 +210,11 @@ function getMpCostPerTurn(player) {
           && sk !== "施毒术" && sk !== "瘟疫" && sk !== "毒云") singleAtkSkills++;
     }
   }
-  // 触发型技能（delay>0）触发时耗 delay×2 MP，按平均每回合 delay分之一 次触发
+  // 触发型技能（delay>0）触发时耗 delay×2 MP，冷却周期 delay+1 回合 → 平均每回合 delay×2/(delay+1)
   let triggeredMpPerTurn = 0;
   for (const sk of player.equippedSkills || []) {
     const sd = SKILLS[sk];
-    if (sd && sd.delay > 0 && sd.type !== "heal") triggeredMpPerTurn += (sd.delay * 2) / sd.delay;
+    if (sd && sd.delay > 0 && sd.type !== "heal") triggeredMpPerTurn += (sd.delay * 2) / (sd.delay + 1);
   }
   return { perTurn: singleAtkSkills * 2 + triggeredMpPerTurn, singleAtkSkills };
 }
@@ -396,6 +398,8 @@ function getBuffDefBonus(player) {
  * 隐身术复刻原版仇恨转移：真实6回合状态，仅在有存活宝宝时生效；
  * 宝宝有HP会被击杀（死后同回合后续怪转打玩家，下回合重召）；
  * 麻痹回合 / BOSS召唤物 / 中毒DOT 无视隐身直接伤害玩家。
+ * 波次全灭按原版重置隐身与宝宝并同回合刷新下一波（新波首轮回击无隐身保护）。
+ * 毒DOT（施毒/瘟疫/毒云）只作用主目标；"全场"伤害由AOE溅射通道承担。
  * 输出真实的 死亡/小时 与受死亡拖累后的实际收益。
  * =================================================================== */
 const SIM_DEFAULT_TURNS = 3000; // 模拟回合数（1回合=1秒，3000回合≈50分钟游戏时间）
@@ -425,6 +429,7 @@ function simulateMap(map, player, stats, parts, opts) {
   const HP_TH = opts.hpThreshold || SIM_HP_THRESHOLD;
   const MP_TH = opts.mpThreshold || SIM_MP_THRESHOLD;
   const rng = opts.rng || Math.random;
+  const dbg = opts.debug; // 可选调试仪表：传入对象可收集 波次/boss波/麻痹回合/麻痹致死/隐身空窗/承伤 统计
   const rollDmg = (minAtk, maxAtk, minDef, maxDef) => {
     const atk = minAtk + rng() * (maxAtk - minAtk);
     const def = (minDef || 0) + rng() * ((maxDef || 0) - (minDef || 0));
@@ -468,7 +473,7 @@ function simulateMap(map, player, stats, parts, opts) {
   let playerPoison = 0, playerPoisonDmg = 0, playerStunned = false;
   let stealthTurns = 0;         // 隐身剩余回合（触发后6回合，仇恨强制转移至宝宝）
   let minions = [];             // 召唤宝宝（有HP、会被击杀、下回合重召）
-  let simGold = 1000000;        // 模拟金币池（死亡按1%扣）
+  let simGold = player.gold || 1000000; // 金币池：死亡按当前携带金1%扣（无 gold 字段则用100万）
   let kills = 0, expGain = 0, deaths = 0, dropGold = 0, potGold = 0;
 
   // 召唤宝宝模板（原版：atk=SC×bonus×2，hp=max(200, SC×bonus×30)，死后下回合满血重召）
@@ -481,10 +486,12 @@ function simulateMap(map, player, stats, parts, opts) {
   const spawnWave = () => {
     const total = map.monsters.reduce((s, m) => s + m.count, 0);
     monsters = [];
+    if (dbg) dbg.waves = (dbg.waves || 0) + 1;
     for (let i = 0; i < N; i++) {
       let roll = rng() * total, chosen = map.monsters[0].name;
       for (const m of map.monsters) { roll -= m.count; if (roll <= 0) { chosen = m.name; break; } }
       const t = MONSTERS[chosen]; if (!t) continue;
+      if (dbg && t.type === "boss") dbg.bossWaves++;
       monsters.push({ name: chosen, cur: t.hp, maxHp: t.hp, minAtk: t.minAtk, maxAtk: t.maxAtk,
         minDef: t.minDef, maxDef: t.minDef, minMagDef: t.minMagDef, maxMagDef: t.minMagDef,
         exp: t.exp, skills: t.skills || [], stunned: false });
@@ -534,6 +541,7 @@ function simulateMap(map, player, stats, parts, opts) {
   // 完全无视隐身与宝宝仇恨转移。
   const monstersAttack = (stunTurn) => {
     let aliveMinions = minions.filter(m => m.hp > 0);
+    if (dbg && !stunTurn && stealthTurns === 0) dbg.gapTurns++;
     for (const m of monsters) {
       if (m.dead) continue;
       if (m.stunned) { m.stunned = false; continue; }
@@ -544,6 +552,7 @@ function simulateMap(map, player, stats, parts, opts) {
           : (aliveMinions.length > 0 || hasVirtualMinion) && rng() < 0.4;       // 非隐身：40%打宝宝
         hitsPlayer = !divert;
       }
+      if (dbg && hitsPlayer) { dbg.playerHits++; if (aliveMinions.length === 0 && stealthTurns > 0) dbg.exposedHits++; }
       if (!hitsPlayer) {
         // 打宝宝：享受玩家防御但不吃buff减伤（原版 monsterAttackMinion）；
         // 宝宝死后同回合内后续怪立即转打玩家（原版逐怪收集存活宝宝）
@@ -590,8 +599,9 @@ function simulateMap(map, player, stats, parts, opts) {
     // 2. 麻痹回合：跳过行动，全怪直接围殴玩家（无视隐身/宝宝；原版此回合不减隐身、不重召宝宝）
     if (playerStunned) {
       playerStunned = false;
+      if (dbg) dbg.stunTurns++;
       monstersAttack(true);
-      if (hp <= 0) { onDeath(); continue; }
+      if (hp <= 0) { if (dbg) dbg.deathInStun++; onDeath(); continue; }
       autoHeal();
       continue;
     }
@@ -647,7 +657,6 @@ function simulateMap(map, player, stats, parts, opts) {
     // 5. 施毒/特效/召唤宝宝（期望值通道，原版为3回合刷新DOT，稳态等效）
     const main = monsters.find(m => !m.dead);
     if (main) hit(main, parts.poisonSingle + parts.specialSingle);
-    if (parts.poisonAoEPerMon > 0) for (const m of monsters) if (!m.dead) hit(m, parts.poisonAoEPerMon);
     if (parts.summonPerMon > 0) for (const m of monsters) if (!m.dead) hit(m, parts.summonPerMon);
 
     // 6. 怪物反击
@@ -660,8 +669,25 @@ function simulateMap(map, player, stats, parts, opts) {
     // 7. 回合末喝药（一回合一瓶HP+一瓶MP）
     autoHeal();
 
-    // 8. 波次全灭：清除毒/麻痹状态（下回合重刷）
-    if (monsters.every(m => m.dead)) { monsters = []; bossMinions = []; playerPoison = 0; playerStunned = false; }
+    // 8. 波次全灭：原版 onMonsterDeath 清除全部战斗状态（含隐身/宝宝/毒/麻痹），
+    //    同 tick 刷新下一波：宝宝满血重召并攻击新波，新波立即反击——此时隐身已被
+    //    清零（技能冷却独立存在，需等冷却转好才能重新触发），新波前几回合怪物
+    //    40/60 分流、技能直接打玩家。这是"波次切换/BOSS先手麻痹"死亡窗口的来源。
+    if (monsters.every(m => m.dead)) {
+      monsters = []; bossMinions = [];
+      playerPoison = 0; playerStunned = false;
+      stealthTurns = 0; minions = [];
+      autoHeal(); // 原版波次清除时结算一次喝药（origin-game.js 1070行）
+      spawnWave();
+      monsters = monsters.filter(m => !m.dead);
+      if (monsters.length) {
+        minions = minionTemplates.map(t => ({ ...t, hp: t.maxHp })); // 同回合满血重召
+        if (parts.summonPerMon > 0) for (const m of monsters) if (!m.dead) hit(m, parts.summonPerMon);
+        monstersAttack();
+        if (hp <= 0) { onDeath(); continue; }
+        autoHeal();
+      }
+    }
   }
 
   const minutes = TURNS / 60;
