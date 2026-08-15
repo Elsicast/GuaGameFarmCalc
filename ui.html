@@ -44,7 +44,7 @@
 </div>
 
 <div id="result-panel" class="panel" style="display:none;">
-  <h2>③ 地图 Farm 效率排名 <span style="color:#888;font-weight:normal;font-size:12px;">（点击表头排序）</span></h2>
+  <h2>③ 地图 Farm 效率排名 <span id="calc-progress" style="color:#4fc3f7;font-weight:600;font-size:13px;"></span> <span style="color:#888;font-weight:normal;font-size:12px;">（点击表头排序）</span></h2>
   <div style="overflow-x:auto; max-height: 75vh;">
     <table id="result-table">
       <thead id="result-head"></thead>
@@ -52,7 +52,8 @@
     </table>
   </div>
   <p class="hint">
-    💡 <b>净金币</b> = 怪物金币掉落 − 蓝药购买成本 − 红药购买成本（按实际承伤计算）。<br>
+    💡 主列（击杀/经验/金币/净金）均为<b>蒙特卡洛模拟值</b>（受死亡拖累的真实收益），悬停可看解析式对比；计算分批进行，排名随进度实时刷新。<br>
+    💡 <b>净金币</b> = 金币掉落 + 掉落药半价卖出 − 蓝药费 − 红药费（药钱按消耗全价单独计算，掉落药不抵扣药费；模拟值另含死亡掉金损失）。<br>
     💡 带 <span style="color:#ff9800">*</span> 的数字表示该图<b>扛不到杀死怪就死</b>，经验/掉落实际拿不到，净金币为纯药水亏损。<br>
     💡 <b>击杀/分</b> 按游戏官方公式：60 ÷ (加权HP ÷ 每回合输出)，上限60（每秒1回合）。<br>
     💡 二大陆地图标注 <span class="c2">[二大陆]</span>，需先通关通天塔30层。

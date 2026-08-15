@@ -368,7 +368,7 @@ tr.impractical td.map-name b { color: #ff9800; }
 </div>
 
 <div id="result-panel" class="panel" style="display:none;">
-  <h2>③ 地图 Farm 效率排名 <span style="color:#888;font-weight:normal;font-size:12px;">（点击表头排序）</span></h2>
+  <h2>③ 地图 Farm 效率排名 <span id="calc-progress" style="color:#4fc3f7;font-weight:600;font-size:13px;"></span> <span style="color:#888;font-weight:normal;font-size:12px;">（点击表头排序）</span></h2>
   <div style="overflow-x:auto; max-height: 75vh;">
     <table id="result-table">
       <thead id="result-head"></thead>
@@ -376,7 +376,8 @@ tr.impractical td.map-name b { color: #ff9800; }
     </table>
   </div>
   <p class="hint">
-    💡 <b>净金币</b> = 怪物金币掉落 − 蓝药购买成本 − 红药购买成本（按实际承伤计算）。<br>
+    💡 主列（击杀/经验/金币/净金）均为<b>蒙特卡洛模拟值</b>（受死亡拖累的真实收益），悬停可看解析式对比；计算分批进行，排名随进度实时刷新。<br>
+    💡 <b>净金币</b> = 金币掉落 + 掉落药半价卖出 − 蓝药费 − 红药费（药钱按消耗全价单独计算，掉落药不抵扣药费；模拟值另含死亡掉金损失）。<br>
     💡 带 <span style="color:#ff9800">*</span> 的数字表示该图<b>扛不到杀死怪就死</b>，经验/掉落实际拿不到，净金币为纯药水亏损。<br>
     💡 <b>击杀/分</b> 按游戏官方公式：60 ÷ (加权HP ÷ 每回合输出)，上限60（每秒1回合）。<br>
     💡 二大陆地图标注 <span class="c2">[二大陆]</span>，需先通关通天塔30层。
@@ -4457,12 +4458,15 @@ function avgDamage(minAtk, maxAtk, minDef, maxDef) {
 
 // ---------- 蓝药消耗：每回合耗 MP ----------
 function getMpCostPerTurn(player) {
-  // 每个无冷却单体攻击技能耗 2MP/回合（游戏第 487-502 行）
+  // 无冷却单体攻击技能耗 2MP/回合 —— 仅法/道（原版第487-502行在法/道魔法段分支内；
+  // 战士的 delay=0 攻击技能直接乘物攻、不进魔法段、不耗蓝）
   let singleAtkSkills = 0;
-  for (const sk of player.equippedSkills || []) {
-    const sd = SKILLS[sk];
-    if (sd && sd.type === "attack" && (!sd.delay || sd.delay === 0) && !sd.aoe
-        && sk !== "施毒术" && sk !== "瘟疫" && sk !== "毒云") singleAtkSkills++;
+  if (player.job !== "warrior") {
+    for (const sk of player.equippedSkills || []) {
+      const sd = SKILLS[sk];
+      if (sd && sd.type === "attack" && (!sd.delay || sd.delay === 0) && !sd.aoe
+          && sk !== "施毒术" && sk !== "瘟疫" && sk !== "毒云") singleAtkSkills++;
+    }
   }
   // 触发型技能（delay>0）触发时耗 delay×2 MP，按平均每回合 delay分之一 次触发
   let triggeredMpPerTurn = 0;
@@ -4658,6 +4662,22 @@ const SIM_DEFAULT_TURNS = 3000; // 模拟回合数（1回合=1秒，3000回合�
 const SIM_HP_THRESHOLD = 0.7;   // 原版默认：HP<70% 自动喝红药
 const SIM_MP_THRESHOLD = 0.3;   // 原版默认：MP<30% 自动喝蓝药
 
+// 药水候选缓存：AI 选药每回合最多触发2次×数千回合×上百图，
+// 不能每次都全量扫描+过滤 ITEMS（这是模拟卡顿的主要来源）
+let _potionCands = null;
+function getPotionCands() {
+  if (!_potionCands) {
+    const hp = [], mp = [];
+    for (const info of Object.values(ITEMS)) {
+      if (info.type !== "potion") continue;
+      if (info.healHp) hp.push(info);        // 含太阳水类（HP优先归红药）
+      else if (info.healMp) mp.push(info);
+    }
+    _potionCands = { hp, mp };
+  }
+  return _potionCands;
+}
+
 function simulateMap(map, player, stats, parts, opts) {
   opts = opts || {};
   const N = opts.waveSize || getWaveSize();
@@ -4676,13 +4696,14 @@ function simulateMap(map, player, stats, parts, opts) {
   const magicBase = player.job === "mage" ? stats.maxMc : stats.maxSc;
 
   // 输出侧技能分类（延迟型独立冷却，常驻型每回合生效）
+  // 战士例外：delay=0 攻击技能已并入 warriorMult 乘物攻（原版战士分支不进魔法段、不耗2MP）
   const delaySkills = [], residentSkills = [], aoeResident = [], aoeDelay = [];
   let passiveMagic = 0, normalPassive = parts.normalPassive;
   for (const sk of player.equippedSkills || []) {
     const sd = SKILLS[sk]; if (!sd) continue;
     if (sd.delay > 0) {
       if (sd.aoe) aoeDelay.push(sk); else delaySkills.push(sk);
-    } else if (sd.type === "attack" && !sd.aoe && sk !== "施毒术" && sk !== "瘟疫" && sk !== "毒云") {
+    } else if (player.job !== "warrior" && sd.type === "attack" && !sd.aoe && sk !== "施毒术" && sk !== "瘟疫" && sk !== "毒云") {
       residentSkills.push(sk);
     } else if (sd.aoe && sd.type === "attack") {
       aoeResident.push(sk);
@@ -4691,6 +4712,7 @@ function simulateMap(map, player, stats, parts, opts) {
     }
   }
   const cooldowns = {};
+  const allDelaySkills = delaySkills.concat(aoeDelay); // 提到循环外，避免每回合分配
 
   // 击杀收益：金币期望（金币掉落 + 掉落药半价卖店，掉落药不抵扣药费）/ 经验
   const killGold = {};
@@ -4738,14 +4760,13 @@ function simulateMap(map, player, stats, parts, opts) {
   // AI 选药（复刻 _resolveAutoPotion auto 模式：恢复量最贴合缺口；金币不足自动降级）
   const drinkPotion = (kind, cur, max) => {
     const missing = max - cur;
-    const cands = Object.entries(ITEMS).filter(([, i]) =>
-      i.type === "potion" && (kind === "hp" ? i.healHp : (i.healMp && !i.healHp)));
-    cands.sort((a, b) => Math.abs((kind === "hp" ? a[1].healHp : a[1].healMp) - missing)
-      - Math.abs((kind === "hp" ? b[1].healHp : b[1].healMp) - missing));
-    for (const [, info] of cands) {
+    const key = kind === "hp" ? "healHp" : "healMp";
+    const cands = (kind === "hp" ? getPotionCands().hp : getPotionCands().mp).slice();
+    cands.sort((a, b) => Math.abs(a[key] - missing) - Math.abs(b[key] - missing));
+    for (const info of cands) {
       if (simGold >= (info.price || 0)) {
         simGold -= info.price || 0; potGold += info.price || 0;
-        return kind === "hp" ? Math.min(info.healHp, missing) : Math.min(info.healMp, max - cur);
+        return Math.min(info[key], missing);
       }
     }
     return 0;
@@ -4845,7 +4866,7 @@ function simulateMap(map, player, stats, parts, opts) {
 
     // 技能冷却推进 + 当回合触发加成（复刻 processSkillCooldowns）
     let triggeredBonus = 0; const triggeredAoe = [];
-    for (const sk of delaySkills.concat(aoeDelay)) {
+    for (const sk of allDelaySkills) {
       const sd = SKILLS[sk];
       if (cooldowns[sk] === undefined) cooldowns[sk] = 0;
       if (cooldowns[sk] <= 0) {
@@ -4945,12 +4966,17 @@ function loadSample() {
   loadAndCalc();
 }
 function clearAll() {
+  calcRunId++; // 取消仍在进行中的异步计算批次
   document.getElementById("json-input").value = "";
   document.getElementById("error-msg").textContent = "";
   document.getElementById("player-panel").style.display = "none";
   document.getElementById("result-panel").style.display = "none";
+  const progress = document.getElementById("calc-progress");
+  if (progress) progress.textContent = "";
   currentResults = [];
 }
+
+let calcRunId = 0; // 计算批次代号：重开计算/清空时递增，旧的异步批次检测到后自行终止
 
 function loadAndCalc() {
   const err = document.getElementById("error-msg");
@@ -4971,16 +4997,32 @@ function loadAndCalc() {
 
   renderPlayer(player, stats, dps, mpPerTurn, singleAtkSkills);
 
-  // 计算所有地图（parts 用于对每只怪单独扣防）
+  // 异步分批计算：蒙特卡洛模拟全图约2秒，同步跑会卡死页面。
+  // 每批最多算40ms就让出主线程，算完的地图立刻上表并按当前排序实时重排。
   const simOpts = getSimOptions();
-  currentResults = MAPS.map(m => {
-    const r = calcMap(m, player, stats, dps, mpPerTurn, parts);
-    r.sim = simulateMap(m, player, stats, parts, simOpts);
-    return r;
-  });
-  // 默认按经验降序（主列即模拟值 → 实际按模拟经验排序）
-  sortKey = "expPerMin"; sortDesc = true;
+  const runId = ++calcRunId;
+  currentResults = [];
+  sortKey = "expPerMin"; sortDesc = true; expandedRow = null; // 默认按模拟经验降序
+  const progress = document.getElementById("calc-progress");
+  document.getElementById("result-panel").style.display = "block";
   renderTable();
+  let idx = 0;
+  const step = () => {
+    if (runId !== calcRunId) return; // 已被新计算/清空取代，本批次作废
+    const t0 = Date.now();
+    while (idx < MAPS.length) {
+      const m = MAPS[idx++];
+      const r = calcMap(m, player, stats, dps, mpPerTurn, parts);
+      r.sim = simulateMap(m, player, stats, parts, simOpts);
+      currentResults.push(r);
+      if (Date.now() - t0 > 40) break;
+    }
+    renderTable();
+    if (progress) progress.textContent = idx < MAPS.length ? `⏳ 模拟中 ${idx}/${MAPS.length}…` : "";
+    if (idx < MAPS.length) setTimeout(step, 0);
+  };
+  if (progress) progress.textContent = `⏳ 模拟中 0/${MAPS.length}…`;
+  setTimeout(step, 0);
 }
 
 function renderPlayer(player, stats, dps, mpPerTurn, singleAtkSkills) {
@@ -4988,6 +5030,9 @@ function renderPlayer(player, stats, dps, mpPerTurn, singleAtkSkills) {
   const jobName = { mage: "法师", warrior: "战士", taoist: "道士" }[player.job] || player.job;
   const mainStat = player.job === "mage" ? `MC ${stats.minMc}-${stats.maxMc}`
     : player.job === "taoist" ? `SC ${stats.minSc}-${stats.maxSc}` : `攻 ${stats.minAtk}-${stats.maxAtk}`;
+  const mpTxt = mpPerTurn <= 0 ? "0（普攻不耗蓝）"
+    : singleAtkSkills > 0 ? `${mpPerTurn} MP（含${singleAtkSkills}个单体技能）`
+    : `${mpPerTurn} MP`;
   const cards = [
     { label: "角色", value: `${player.name||""} Lv${player.level} ${jobName}` },
     { label: "HP / MP", value: `${stats.maxHp} / ${stats.maxMp}`, danger: stats.maxHp < 100 },
@@ -4996,7 +5041,7 @@ function renderPlayer(player, stats, dps, mpPerTurn, singleAtkSkills) {
     { label: "魔防", value: `${stats.minMagDef}-${stats.maxMagDef}` },
     { label: player.job === "mage" ? "魔法(MC)" : (player.job === "taoist" ? "道术(SC)" : "主属性"), value: mainStat },
     { label: "每回合输出", value: dps + " 伤害" },
-    { label: "蓝耗/回合", value: mpPerTurn + " MP (" + singleAtkSkills + "单体技能)", danger: mpPerTurn > 6 },
+    { label: "蓝耗/回合", value: mpTxt, danger: mpPerTurn > 6 },
   ];
   const html = cards.map(c =>
     `<div class="stat${c.danger ? " danger" : ""}"><div class="label">${c.label}</div><div class="value">${c.value}</div></div>`
