@@ -4672,7 +4672,9 @@ function getBuffDefBonus(player) {
  * 隐身术复刻原版仇恨转移：真实6回合状态，仅在有存活宝宝时生效；
  * 宝宝有HP会被击杀（死后同回合后续怪转打玩家，下回合重召）；
  * 麻痹回合 / BOSS召唤物 / 中毒DOT 无视隐身直接伤害玩家。
- * 波次全灭按原版重置隐身与宝宝并同回合刷新下一波（新波首轮回击无隐身保护）。
+ * 波次全灭按原版重置隐身与宝宝并同回合刷新下一波（新波首轮回击无隐身保护）；
+ * 谁清的波决定宝宝重召：玩家清波=全部重召，宝宝溅射清波=只重召杀手之后的，
+ * 主目标死于宝宝=零重召（新波含BOSS时被全额齐射秒杀的根源）。
  * 毒DOT（施毒/瘟疫/毒云）只作用主目标；"全场"伤害由AOE溅射通道承担。
  * 输出真实的 死亡/小时 与受死亡拖累后的实际收益。
  * =================================================================== */
@@ -4773,7 +4775,13 @@ function simulateMap(map, player, stats, parts, opts) {
   // 召唤宝宝模板（原版：atk=SC×bonus×2，hp=max(200, SC×bonus×30)，死后下回合满血重召）
   const minionTemplates = (player.equippedSkills || []).filter(sk => {
     const sd = SKILLS[sk]; return sd && sd.type === "summon";
-  }).map(sk => ({ skillName: sk, maxHp: Math.max(200, Math.floor(scBase * SKILLS[sk].damageBonus * 30)) }));
+  }).map(sk => ({
+    skillName: sk,
+    atk: Math.max(1, Math.floor(scBase * SKILLS[sk].damageBonus * 2.0)),
+    maxHp: Math.max(200, Math.floor(scBase * SKILLS[sk].damageBonus * 30)),
+  }));
+  // 按装备顺序的宝宝攻击力列表（原版按技能迭代顺序逐只攻击）
+  const summonMinionAtks = minionTemplates.map(t => t.atk);
   // 记忆戒指/诱惑之光：虚拟宝宝（不建模HP、不死，仅承接仇恨）
   const hasVirtualMinion = parts.hasMinion && minionTemplates.length === 0;
 
@@ -4885,6 +4893,32 @@ function simulateMap(map, player, stats, parts, opts) {
     }
   };
 
+  // 波次清除（原版 onMonsterDeath 1048-1076 + 后续阶段）：清全部战斗状态（含隐身/宝宝，
+  // 但技能冷却保留 → 隐身需等冷却转好，存在真空期），同 tick 刷新下一波并立即反击。
+  // killerIdx 决定重召哪些宝宝（这就是"清波进新波遇BOSS被秒杀"的机制根源）：
+  //   -1  = 玩家自己清的波（637行）→ 全部重召并攻击新波（新波回击有40%分流）；
+  //    i  = 第i只宝宝的溅射清波（947行）→ 仅重召 i+1 之后的宝宝（不攻击）；
+  //   len = 最后一只死于宝宝主目标伤害（641行延后结算）→ 零重召（新波全额齐射玩家）。
+  const doWaveClear = (killerIdx) => {
+    monsters = []; bossMinions = [];
+    playerPoison = 0; playerStunned = false;
+    stealthTurns = 0;
+    autoHeal(); // 原版波次清除时结算一次喝药（origin-game.js 1070行）
+    spawnWave();
+    monsters = monsters.filter(m => !m.dead);
+    minions = (killerIdx < 0 ? minionTemplates : minionTemplates.slice(killerIdx + 1))
+      .map(t => ({ ...t, hp: t.maxHp }));
+    if (monsters.length === 0) return;
+    if (killerIdx < 0) {
+      // 原版640行：玩家清波后宝宝阶段照常执行——重召的全部宝宝攻击新波
+      for (const a of summonMinionAtks)
+        for (const m of monsters) if (!m.dead) hit(m, Math.max(1, Math.floor(a * (0.8 + rng() * 0.4))));
+    }
+    monstersAttack(); // 新波立即反击（隐身已清零；宝宝=重召子集，可能为0 → 全额齐射+技能）
+    if (hp <= 0) { onDeath(); return; }
+    autoHeal();
+  };
+
   for (let turn = 0; turn < TURNS; turn++) {
     if (monsters.length === 0) spawnWave();
     monsters = monsters.filter(m => !m.dead);
@@ -4950,10 +4984,32 @@ function simulateMap(map, player, stats, parts, opts) {
       else splash = Math.max(1, Math.floor(dmg * aoeBonusNow * 0.5));
       for (const m of monsters) if (!m.dead) hit(m, splash);
     }
-    // 5. 施毒/特效/召唤宝宝（期望值通道，原版为3回合刷新DOT，稳态等效）
+    // 5. 施毒/特效（主目标；原版 playerPoisonApply 在宝宝阶段前）
     const main = monsters.find(m => !m.dead);
     if (main) hit(main, parts.poisonSingle + parts.specialSingle);
-    if (parts.summonPerMon > 0) for (const m of monsters) if (!m.dead) hit(m, parts.summonPerMon);
+    // 玩家自己清的波（普攻/魔法/溅射/毒）→ 原版637行结算：宝宝阶段全部重召+攻击新波
+    if (monsters.every(m => m.dead)) { doWaveClear(-1); continue; }
+
+    // 5b. 召唤宝宝攻击：按装备顺序逐只结算（roll=atk×0.8~1.2，主目标+全场溅射）。
+    // 原版 quirk（935/941/947/641行）：主目标死亡延后到宝宝阶段结束后结算 → 清波时零重召；
+    // 溅射死亡即时中途结算 → 清波时仅重召"杀手之后"的宝宝；玩家自己打死的 → 全部重召。
+    // 这决定新波首轮回击时有无宝宝承接仇恨——10只波+新波出BOSS时零保护被全额齐射秒杀的根源。
+    for (let i = 0; i < summonMinionAtks.length; i++) {
+      const m0 = monsters.find(m => !m.dead);
+      if (!m0) break; // 主目标已死：本回合后续宝宝不行动（原版935行守卫）
+      const a = summonMinionAtks[i];
+      m0.cur -= Math.max(1, Math.floor(a * (0.8 + rng() * 0.4))); // 主目标伤害（死亡延后结算）
+      if (m0.cur <= 0 && !m0.dead) { m0.dead = true; onKill(m0); }
+      let splashed = false;
+      for (const m of monsters) { // 溅射其余存活怪（即时结算）
+        if (m.dead) continue;
+        splashed = true;
+        m.cur -= Math.max(1, Math.floor(a * (0.8 + rng() * 0.4)));
+        if (m.cur <= 0 && !m.dead) { m.dead = true; onKill(m); }
+      }
+      if (monsters.every(m => m.dead)) { doWaveClear(splashed ? i : summonMinionAtks.length); break; }
+    }
+    if (monsters.every(m => m.dead)) continue; // 已在 doWaveClear 内完成新波回击
 
     // 6. 怪物反击
     monstersAttack();
@@ -4964,26 +5020,6 @@ function simulateMap(map, player, stats, parts, opts) {
 
     // 7. 回合末喝药（一回合一瓶HP+一瓶MP）
     autoHeal();
-
-    // 8. 波次全灭：原版 onMonsterDeath 清除全部战斗状态（含隐身/宝宝/毒/麻痹），
-    //    同 tick 刷新下一波：宝宝满血重召并攻击新波，新波立即反击——此时隐身已被
-    //    清零（技能冷却独立存在，需等冷却转好才能重新触发），新波前几回合怪物
-    //    40/60 分流、技能直接打玩家。这是"波次切换/BOSS先手麻痹"死亡窗口的来源。
-    if (monsters.every(m => m.dead)) {
-      monsters = []; bossMinions = [];
-      playerPoison = 0; playerStunned = false;
-      stealthTurns = 0; minions = [];
-      autoHeal(); // 原版波次清除时结算一次喝药（origin-game.js 1070行）
-      spawnWave();
-      monsters = monsters.filter(m => !m.dead);
-      if (monsters.length) {
-        minions = minionTemplates.map(t => ({ ...t, hp: t.maxHp })); // 同回合满血重召
-        if (parts.summonPerMon > 0) for (const m of monsters) if (!m.dead) hit(m, parts.summonPerMon);
-        monstersAttack();
-        if (hp <= 0) { onDeath(); continue; }
-        autoHeal();
-      }
-    }
   }
 
   const minutes = TURNS / 60;
@@ -5255,8 +5291,8 @@ function calcMapWithSims(map, player, stats, dps, mpPerTurn, parts, simOpts) {
         hpThreshold: bestBoss.hpThreshold, hpPotion: bestBoss.hpPotion,
         mpThreshold: bestMp.mpThreshold, mpPotion: bestMp.mpPotion,
       }));
-      // 终值校验：boss方案必须在满长度复算中严格优于经验方案才展示（防扫描噪声翻转）
-      if (bossSim.bossKillsPerHour > r.sim.bossKillsPerHour) r.bossSim = bossSim;
+      // 终值校验：boss方案需在满长度复算中比经验方案多杀≥10%的boss才展示（防噪声/微小提升不值得换死亡）
+      if (bossSim.bossKillsPerHour >= r.sim.bossKillsPerHour * 1.1) r.bossSim = bossSim;
     }
     if (!r.bossSim) r.bossSim = r.sim;
   }
