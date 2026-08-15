@@ -4769,6 +4769,7 @@ function simulateMap(map, player, stats, parts, opts) {
   let playerPoison = 0, playerPoisonDmg = 0, playerStunned = false;
   let stealthTurns = 0;         // 隐身剩余回合（触发后6回合，仇恨强制转移至宝宝）
   let minions = [];             // 召唤宝宝（有HP、会被击杀、下回合重召）
+  let curTurn = 0;              // 当前回合数（boss击杀耗时统计用）
   let simGold = player.gold || 1000000; // 金币池：死亡按当前携带金1%扣（无 gold 字段则用100万）
   let kills = 0, bossKills = 0, expGain = 0, deaths = 0, dropGold = 0, potGold = 0;
 
@@ -4793,17 +4794,20 @@ function simulateMap(map, player, stats, parts, opts) {
       let roll = rng() * total, chosen = map.monsters[0].name;
       for (const m of map.monsters) { roll -= m.count; if (roll <= 0) { chosen = m.name; break; } }
       const t = MONSTERS[chosen]; if (!t) continue;
-      if (dbg && t.type === "boss") dbg.bossWaves++;
+      if (dbg && t.type === "boss") dbg.bossSpawns = (dbg.bossSpawns || 0) + 1;
       monsters.push({ name: chosen, cur: t.hp, maxHp: t.hp, minAtk: t.minAtk, maxAtk: t.maxAtk,
         minDef: t.minDef, maxDef: t.minDef, minMagDef: t.minMagDef, maxMagDef: t.minMagDef,
-        exp: t.exp, skills: t.skills || [], stunned: false });
+        exp: t.exp, skills: t.skills || [], stunned: false, spawnTurn: curTurn });
     }
     bossMinions = [];
   };
 
   const onKill = (m) => {
     kills++; expGain += m.exp; dropGold += killGold[m.name] || 0; simGold += killGold[m.name] || 0;
-    if (MONSTERS[m.name] && MONSTERS[m.name].type === "boss") bossKills++;
+    if (MONSTERS[m.name] && MONSTERS[m.name].type === "boss") {
+      bossKills++;
+      if (dbg) { dbg.bossKillTurns = (dbg.bossKillTurns || 0) + (curTurn - (m.spawnTurn || 0)); }
+    }
   };
   const hit = (m, dmg) => { m.cur -= dmg; if (m.cur <= 0 && !m.dead) { m.dead = true; onKill(m); } };
 
@@ -4830,6 +4834,8 @@ function simulateMap(map, player, stats, parts, opts) {
 
   const onDeath = () => {
     deaths++;
+    if (dbg && monsters.some(m => !m.dead && MONSTERS[m.name] && MONSTERS[m.name].type === "boss"))
+      dbg.bossAliveDeaths = (dbg.bossAliveDeaths || 0) + 1;
     const loss = Math.floor(simGold * 0.01);
     simGold -= loss; dropGold -= loss; // 死亡损失1%金币（从收益中扣除）
     hp = stats.maxHp; mp = stats.maxMp;
@@ -4920,6 +4926,7 @@ function simulateMap(map, player, stats, parts, opts) {
   };
 
   for (let turn = 0; turn < TURNS; turn++) {
+    curTurn = turn;
     if (monsters.length === 0) spawnWave();
     monsters = monsters.filter(m => !m.dead);
 
@@ -4999,10 +5006,10 @@ function simulateMap(map, player, stats, parts, opts) {
       if (!m0) break; // 主目标已死：本回合后续宝宝不行动（原版935行守卫）
       const a = summonMinionAtks[i];
       m0.cur -= Math.max(1, Math.floor(a * (0.8 + rng() * 0.4))); // 主目标伤害（死亡延后结算）
-      if (m0.cur <= 0 && !m0.dead) { m0.dead = true; onKill(m0); }
+      if (m0.cur <= 0 && !m0.dead) { m0.dead = true; onKill(m0); if (dbg) dbg.minionMainKills = (dbg.minionMainKills || 0) + 1; }
       let splashed = false;
-      for (const m of monsters) { // 溅射其余存活怪（即时结算）
-        if (m.dead) continue;
+      for (const m of monsters) { // 溅射其余存活怪（即时结算；原版排除主目标）
+        if (m.dead || m === m0) continue;
         splashed = true;
         m.cur -= Math.max(1, Math.floor(a * (0.8 + rng() * 0.4)));
         if (m.cur <= 0 && !m.dead) { m.dead = true; onKill(m); }
@@ -5277,8 +5284,10 @@ function calcMapWithSims(map, player, stats, dps, mpPerTurn, parts, simOpts) {
       })));
   let bestMp = mpSims[0];
   for (const s of mpSims.slice(1)) if (s.netGoldPerMin > bestMp.netGoldPerMin * 1.02) bestMp = s;
-  // 3) 满长度复算主方案
+  // 3) 满长度复算主方案（boss图加长到6000回合：boss击杀是稀有事件，短样本的boss/时噪声可达±35%）
+  const FINAL_TURNS = hasBoss ? 6000 : SIM_DEFAULT_TURNS;
   r.sim = simulateMap(map, player, stats, parts, seeded({
+    turns: FINAL_TURNS,
     hpThreshold: bestHp.hpThreshold, hpPotion: bestHp.hpPotion,
     mpThreshold: bestMp.mpThreshold, mpPotion: bestMp.mpPotion,
   }));
@@ -5288,6 +5297,7 @@ function calcMapWithSims(map, player, stats, dps, mpPerTurn, parts, simOpts) {
     const same = bestBoss.hpThreshold === bestHp.hpThreshold && bestBoss.hpPotion === bestHp.hpPotion;
     if (!same) {
       const bossSim = simulateMap(map, player, stats, parts, seeded({
+        turns: FINAL_TURNS,
         hpThreshold: bestBoss.hpThreshold, hpPotion: bestBoss.hpPotion,
         mpThreshold: bestMp.mpThreshold, mpPotion: bestMp.mpPotion,
       }));
@@ -5461,7 +5471,8 @@ function renderPotionDetail(r) {
     return `<tr${style ? ` style="${style}"` : ""}><td>${thPct(s.hpThreshold)}</td><td>${pot(s.hpPotion)}</td><td>${s.deathsPerHour}</td><td>${s.killsPerMin}</td><td>${s.expPerMin.toLocaleString()}</td><td>${s.potGoldPerMin.toLocaleString()}</td><td>${s.netGoldPerMin.toLocaleString()}</td><td>${s.bossKillsPerHour}</td><td>${mark}</td></tr>`;
   }).join("");
   let html = `<div style="margin-bottom:6px;color:#a5d6ff;">💊 红药策略寻优（阈值×药水档位 × ${r.simSweep.length}组合，扫描${SWEEP_TURNS}回合；固定药水配"自然阈值"=缺口等于药水量时喝，零过量浪费）→ 推荐 <b>${thPct(expTh)}·${pot(expPot)}</b>（在死亡≤${SAFE_DEATHS_PER_HOUR}/时的"可挂机"档位中取经验最优）</div>
-  <table class="db-table" style="margin-bottom:6px;font-size:12px;"><thead><tr><th>阈值</th><th>红药</th><th>死亡/时</th><th>击杀/分</th><th>经验/分</th><th>药费/分</th><th>净金/分</th><th>boss/时</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
+  <table class="db-table" style="margin-bottom:6px;font-size:12px;"><thead><tr><th>阈值</th><th>红药</th><th>死亡/时</th><th>击杀/分</th><th>经验/分</th><th>药费/分</th><th>净金/分</th><th>boss/时</th><th></th></tr></thead><tbody>${rows}</tbody></table>
+  <div style="margin-bottom:6px;color:#666;font-size:11px;">注：扫描为短样本（${SWEEP_TURNS}回合），boss/时 列噪声较大（±30%+），以主方案的满长度模拟为准。</div>`;
   // 蓝药建议（净金口径，需比默认 AI@30% 明显更优才换）
   const m = r.sim;
   const mpTxt = `💧 蓝药建议：${thPct(m.mpThreshold || 0.3)}·${pot(m.mpPotion)}（净金 ${m.netGoldPerMin.toLocaleString()}/分${r.simSweepMp && r.simSweepMp[0] ? "，vs 默认AI@30% " + r.simSweepMp[0].netGoldPerMin.toLocaleString() + "/分" : ""}）`;
