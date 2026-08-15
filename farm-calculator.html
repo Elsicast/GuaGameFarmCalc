@@ -4649,6 +4649,9 @@ function getBuffDefBonus(player) {
  * 与解析式 calcMap 的区别：伤害逐次 roll（攻/防独立均匀随机）、
  * 波次首回合全怪齐射、一回合只喝一瓶药、怪物技能/麻痹/毒/召唤
  * 全部真实结算、死亡清波重来并损失1%金币。
+ * 隐身术复刻原版仇恨转移：真实6回合状态，仅在有存活宝宝时生效；
+ * 宝宝有HP会被击杀（死后同回合后续怪转打玩家，下回合重召）；
+ * 麻痹回合 / BOSS召唤物 / 中毒DOT 无视隐身直接伤害玩家。
  * 输出真实的 死亡/小时 与受死亡拖累后的实际收益。
  * =================================================================== */
 const SIM_DEFAULT_TURNS = 3000; // 模拟回合数（1回合=1秒，3000回合≈50分钟游戏时间）
@@ -4701,8 +4704,17 @@ function simulateMap(map, player, stats, parts, opts) {
   let monsters = [];            // 当前波存活怪
   let bossMinions = [];         // BOSS 召唤物（最多2只，atk）
   let playerPoison = 0, playerPoisonDmg = 0, playerStunned = false;
+  let stealthTurns = 0;         // 隐身剩余回合（触发后6回合，仇恨强制转移至宝宝）
+  let minions = [];             // 召唤宝宝（有HP、会被击杀、下回合重召）
   let simGold = 1000000;        // 模拟金币池（死亡按1%扣）
   let kills = 0, expGain = 0, deaths = 0, dropGold = 0, potGold = 0;
+
+  // 召唤宝宝模板（原版：atk=SC×bonus×2，hp=max(200, SC×bonus×30)，死后下回合满血重召）
+  const minionTemplates = (player.equippedSkills || []).filter(sk => {
+    const sd = SKILLS[sk]; return sd && sd.type === "summon";
+  }).map(sk => ({ skillName: sk, maxHp: Math.max(200, Math.floor(scBase * SKILLS[sk].damageBonus * 30)) }));
+  // 记忆戒指/诱惑之光：虚拟宝宝（不建模HP、不死，仅承接仇恨）
+  const hasVirtualMinion = parts.hasMinion && minionTemplates.length === 0;
 
   const spawnWave = () => {
     const total = map.monsters.reduce((s, m) => s + m.count, 0);
@@ -4750,17 +4762,37 @@ function simulateMap(map, player, stats, parts, opts) {
     simGold -= loss; dropGold -= loss; // 死亡损失1%金币（从收益中扣除）
     hp = stats.maxHp; mp = stats.maxMp;
     playerPoison = 0; playerPoisonDmg = 0; playerStunned = false;
+    stealthTurns = 0; minions = [];   // 原版死亡清全部状态（隐身/宝宝，下回合重召）
     monsters = []; bossMinions = []; // 波次清零重刷（打了一半的怪作废）
   };
 
-  // 全部存活怪反击一轮（麻痹回合 / 普通回合共用）
-  const monstersAttack = () => {
-    // 宝宝分流：隐身覆盖率内100%打宝宝，其余40%概率打宝宝（宝宝不死、不追踪，简化）
-    const petRate = parts.hasMinion ? parts.stealthUptime + (1 - parts.stealthUptime) * 0.4 : 0;
+  // 全部存活怪反击一轮（普通回合 / 麻痹回合共用）
+  // 原版口径（origin-game.js 682-693）：隐身+有存活宝宝 → 强制打宝宝；
+  // 非隐身但有宝宝 → 40%打宝宝；否则打玩家（普攻+技能）。
+  // 麻痹回合（origin-game.js 400-417）：所有怪直接围殴玩家（普攻+技能），
+  // 完全无视隐身与宝宝仇恨转移。
+  const monstersAttack = (stunTurn) => {
+    let aliveMinions = minions.filter(m => m.hp > 0);
     for (const m of monsters) {
       if (m.dead) continue;
       if (m.stunned) { m.stunned = false; continue; }
-      if (rng() < petRate) continue;
+      let hitsPlayer = stunTurn; // 麻痹回合必打玩家
+      if (!hitsPlayer) {
+        const divert = stealthTurns > 0
+          ? (aliveMinions.length > 0 || hasVirtualMinion)                       // 隐身：有宝宝才转移
+          : (aliveMinions.length > 0 || hasVirtualMinion) && rng() < 0.4;       // 非隐身：40%打宝宝
+        hitsPlayer = !divert;
+      }
+      if (!hitsPlayer) {
+        // 打宝宝：享受玩家防御但不吃buff减伤（原版 monsterAttackMinion）；
+        // 宝宝死后同回合内后续怪立即转打玩家（原版逐怪收集存活宝宝）
+        if (aliveMinions.length > 0) {
+          const t = aliveMinions[Math.floor(rng() * aliveMinions.length)];
+          t.hp -= Math.max(1, rollDmg(m.minAtk, m.maxAtk, stats.minDef, stats.maxDef));
+          if (t.hp <= 0) { t.hp = 0; aliveMinions = aliveMinions.filter(x => x !== t); }
+        }
+        continue;
+      }
       hp -= Math.max(1, Math.floor(rollDmg(m.minAtk, m.maxAtk, stats.minDef, stats.maxDef) * (1 - defBonus)));
       if (hp <= 0) return;
       for (const sk of m.skills) {
@@ -4780,7 +4812,7 @@ function simulateMap(map, player, stats, parts, opts) {
         if (hp <= 0) return;
       }
     }
-    // BOSS 召唤物攻击（不走减伤，扣最小防×0.3）
+    // BOSS 召唤物攻击（无视隐身/宝宝，不走减伤，扣最小防×0.3）
     for (const s of bossMinions) {
       hp -= Math.max(1, Math.floor(s.atk * (0.8 + rng() * 0.4) - stats.minDef * 0.3));
       if (hp <= 0) return;
@@ -4794,10 +4826,10 @@ function simulateMap(map, player, stats, parts, opts) {
     // 1. 玩家中毒 DOT（先于行动结算）
     if (playerPoison > 0) { hp -= playerPoisonDmg; playerPoison--; if (hp <= 0) { onDeath(); continue; } }
 
-    // 2. 麻痹回合：跳过行动，全怪围殴
+    // 2. 麻痹回合：跳过行动，全怪直接围殴玩家（无视隐身/宝宝；原版此回合不减隐身、不重召宝宝）
     if (playerStunned) {
       playerStunned = false;
-      monstersAttack();
+      monstersAttack(true);
       if (hp <= 0) { onDeath(); continue; }
       autoHeal();
       continue;
@@ -4806,6 +4838,10 @@ function simulateMap(map, player, stats, parts, opts) {
     // 3. 玩家攻击主目标（普攻 roll + 魔法段 roll）
     let mon = monsters.find(m => !m.dead);
     if (!mon) { spawnWave(); monsters = monsters.filter(m => !m.dead); mon = monsters[0]; if (!mon) continue; }
+
+    // 3.1 宝宝重召（原版在玩家行动阶段刷新：死亡的宝宝满血重召）
+    minions = minionTemplates.map(t =>
+      (minions.find(m => m.skillName === t.skillName && m.hp > 0)) || { ...t, hp: t.maxHp });
 
     // 技能冷却推进 + 当回合触发加成（复刻 processSkillCooldowns）
     let triggeredBonus = 0; const triggeredAoe = [];
@@ -4816,6 +4852,7 @@ function simulateMap(map, player, stats, parts, opts) {
         const cost = sd.delay * 2;
         if (mp >= cost) {
           mp -= cost; triggeredBonus += sd.damageBonus; cooldowns[sk] = sd.delay;
+          if (sk === "隐身术" || sk === "集体隐身术") stealthTurns = 6; // 原版：触发即隐身6回合
           if (sd.aoe) triggeredAoe.push(sk); // 触发型AOE：既进魔法段也进当回合溅射
         }
       } else cooldowns[sk]--;
@@ -4855,6 +4892,9 @@ function simulateMap(map, player, stats, parts, opts) {
     // 6. 怪物反击
     monstersAttack();
     if (hp <= 0) { onDeath(); continue; }
+
+    // 6.5 隐身回合递减（原版在反击后结算；麻痹/毒致死的回合不减）
+    if (stealthTurns > 0) stealthTurns--;
 
     // 7. 回合末喝药（一回合一瓶HP+一瓶MP）
     autoHeal();
