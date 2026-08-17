@@ -185,6 +185,15 @@ function getSpecialRings(player) {
   return out;
 }
 
+// 吸血比例（复刻 game.js getLeechSource）：武器带吸血(嗜血战斧)20%，否则虹魔戒指15%，无则0
+function getLeechRate(player) {
+  if (!getSpecialRings(player).includes("吸血")) return 0;
+  const wpn = (player.equipment || {}).weapon;
+  const wpnName = wpn ? (typeof wpn === "string" ? wpn : wpn.name) : null;
+  if (wpnName && ITEMS[wpnName] && ITEMS[wpnName].special === "吸血") return 0.2;
+  return 0.15;
+}
+
 // 伤害公式（复刻 calcDamage）
 function calcDamage(minAtk, maxAtk, minDef, maxDef) {
   const atk = minAtk + Math.random() * (maxAtk - minAtk);
@@ -281,7 +290,8 @@ function calcMap(map, player, stats, _dps, mpPerTurn, parts) {
 
   let wHP = 0, wExp = 0, wGold = 0, wSingle = 0, wAoe = 0;
   let wDmgToPlayer = 0, wMpPotPerKill = 0, wPotSale = 0;
-  let wSurvive = 0;
+  let wSurvive = 0, wLeechBase = 0;
+  const leechRate = getLeechRate(player);
 
   for (const entry of map.monsters) {
     const mon = MONSTERS[entry.name];
@@ -289,6 +299,12 @@ function calcMap(map, player, stats, _dps, mpPerTurn, parts) {
     const w = entry.count / totalWeight;
     const single = singleDmgToMon(parts, mon); // 主目标单点流（扣该怪自身防/魔防）
     const aoe = aoeDmgToMon(parts, mon);       // 每只AOE流（法/道溅射不扣防、召唤/毒不扣防）
+    // 吸血基数（原版 leechBase=普攻段+魔法段，不含溅射/特戒/毒；逐怪扣防）
+    const physFinal = parts.job === "warrior" ? parts.physSingleBase * parts.warriorMult : parts.physSingleBase;
+    const leechBaseMon = Math.max(1, Math.floor(
+      Math.max(1, physFinal - (mon.minDef || 0) * 0.6) +
+      (parts.magicSingleBase > 0 ? Math.max(1, parts.magicSingleBase - (mon.minMagDef || 0) * 0.6) : 0)
+    ));
     const r = rollDropExpect(entry.name, mon.level);
     // 承伤 & 扛几击（先算，用于判定绝对秒杀）
     const dmgToPlayerRaw = avgDamage(mon.minAtk, mon.maxAtk, stats.minDef, stats.maxDef);
@@ -307,6 +323,7 @@ function calcMap(map, player, stats, _dps, mpPerTurn, parts) {
     wMpPotPerKill += r.mpPot * w * z;
     wPotSale += r.potSale * w * z;
     wSurvive += survive * w * z;
+    wLeechBase += leechBaseMon * w * z;
     // 掉落展示：秒杀怪仍可入 allDrops（仅展示来源，不计入收益）
     for (const it of r.items) {
       const k = it.name;
@@ -339,15 +356,18 @@ function calcMap(map, player, stats, _dps, mpPerTurn, parts) {
   const mpCost = mpCostPerMin * (50 / 30);
 
   // 红药：每回合承伤 = 平均存活(N/2) × 单怪伤害 × 分摊率（宝宝40%挡 / 隐身100%挡）
+  // 吸血回血（复刻 game.js 625-632）每回合固定抵扣；瞬间秒杀判定保守不减吸血（合击瞬间回血无效）
   const shareRate = parts.hasMinion ? (1 - parts.stealthUptime) * 0.6 : 1.0;
-  const dmgPerTurn = (N / 2) * wDmgToPlayer * shareRate;
+  const dmgPerTurnRaw = (N / 2) * wDmgToPlayer * shareRate;
+  const dmgPerTurn = Math.max(0, dmgPerTurnRaw - wLeechBase * leechRate);
   const hpTakenPerMin = dmgPerTurn * turnsPerMin;
   const hpCost = hpTakenPerMin * (50 / 30);
 
   const safety = Math.max(0, Math.round(100 - (dangerCount / totalWeight) * 100));
   // 瞬间秒杀判定：autoHeal 每回合末才喝药，而怪物先反击——若一回合内合击总伤害 ≥ maxHp，
-  // 则吃药来不及、直接阵亡（反复秒杀=无法有效挂机）→ 收益全部归 0。
-  const instakillBarrage = dmgPerTurn >= stats.maxHp;
+  // 则吃药来不及、直接阵亡（反复秒杀=无法有效挂机）→ 收益全部归 0。（吸血是持续回血，
+  // 合击瞬间救不了命，判定用未扣吸血的毛承伤）
+  const instakillBarrage = dmgPerTurnRaw >= stats.maxHp;
   // 可行性：扛几击 ≥ 主目标击杀回合×1.2，且安全度≥40，且不被瞬间秒杀
   const practical = !instakillBarrage && wSurvive >= hitsToKill * 1.2 && safety >= 40;
   // 瞬间秒杀：收益全 0（无有效战斗，无药费亏损）
@@ -459,6 +479,8 @@ function simulateMap(map, player, stats, parts, opts) {
   };
 
   const defBonus = getBuffDefBonus(player);
+  // 吸血特效（复刻 game.js getLeechSource：武器吸血20%优先于虹魔戒指15%）
+  const leechRate = getLeechRate(player);
   const scBase = stats.maxSc > 0 ? stats.maxSc : stats.maxAtk;
   const magicBase = player.job === "mage" ? stats.maxMc : stats.maxSc;
 
@@ -706,6 +728,9 @@ function simulateMap(map, player, stats, parts, opts) {
       dmg += rollDmg(mMin, mMax, mon.minMagDef, mon.maxMagDef);
     }
     hit(mon, Math.max(1, dmg));
+    // 吸血（复刻 game.js 625-632）：基数=普攻段+魔法段（原版 leechBase，不含溅射/特戒/毒）；
+    // 连击追击原版也计入基数，但模拟器连击是期望值混在 specialSingle 里，保守不计
+    if (leechRate > 0) hp = Math.min(stats.maxHp, hp + Math.max(1, Math.floor(Math.max(1, dmg) * leechRate)));
 
     // 4. AOE 溅射：全场存活怪（含主目标）；道士/战士口径与原版一致
     const aoeBonusNow = aoeResident.reduce((s, sk) => s + SKILLS[sk].damageBonus, 0)
@@ -1901,6 +1926,7 @@ const RECOMMEND_TIERS = [
   { lv: 25, label: "Lv25 进阶", slots: 4 },
   { lv: 35, label: "Lv35 高级", slots: 5 },
   { lv: 50, label: "Lv50 毕业", slots: 6 },
+  { lv: 52, label: "Lv52 吸血成型", slots: 6 },
 ];
 // 各职业主属性字段（战士堆物攻DC/法师堆魔法MC/道士堆道术SC）
 const JOB_MAIN_STAT = { warrior: "atk", mage: "mc", taoist: "sc" };
@@ -1971,9 +1997,16 @@ function recommendEquip(job, tierLv) {
     // 注：承伤公式(app.js calcMap 第288行)只用 minDef/maxDef 物防，magDef 不参与减伤 → 防具优先堆物防
     // 道士例外：隐身+宝宝承伤时玩家几乎零承伤(game.js 怪物反击分支)，防具槽优先堆道术——
     // SC 喂宝宝血量/攻击与全部 DOT/溅射通道，物防只小幅降低宝宝承伤，无道术装备时回落物防口径
+    // 战士52+武器例外：吸血特效(嗜血战斧20%回血)优先于攻上限——模拟验证(5005组合×3图)
+    //   吸血斧+全输出 净金50388 vs 独孤九剑最优40739(+24%)、经验+35%，攻上限差2点远补不回
     const isDefSlot = ["armor", "helmet", "bracelet", "boots", "belt", "jade"].includes(slot.type);
     const scFirst = job === "taoist" && isDefSlot;
+    const leechFirst = job === "warrior" && slot.type === "weapon" && tierLv >= 52;
     const sorted = candidates.sort((a, b) => {
+      if (leechFirst) {
+        const la = a[1].special === "吸血" ? 1 : 0, lb = b[1].special === "吸血" ? 1 : 0;
+        if (lb !== la) return lb - la;
+      }
       if (isDefSlot) {
         if (scFirst) {
           const sa = a[1][mainStat] ? a[1][mainStat][1] : 0, sb = b[1][mainStat] ? b[1][mainStat][1] : 0;
@@ -2071,10 +2104,19 @@ function recommendEquip(job, tierLv) {
 
 // 技能推荐：选出该等级能学且最强的 N 个技能
 // 核心机制（复刻 game.js/app.js）：
-// - AOE 技能 damageBonus 累加，法师全额溅射每只怪、0蓝耗 → 法师优先堆 AOE
-// - 单体 attack 技能每个耗 2MP/回合，只打主目标
-// - buff 减伤累加（上限85%）：法师魔法盾0.30+分身0.40=0.70，脆皮法师必上双减伤
-function recommendSkills(job, tierLv, slots, stats) {
+// - 战士：delay=0 攻击技能全部乘进普攻（不耗蓝）；AOE 溅射 = 普攻总伤×ΣAOE加成×0.5 打全场10只
+// - 法/道：AOE 溢出不耗蓝打全场；单体耗2MP/回合只打主目标
+// - buff 减伤累加（上限85%）；吸血特效按普攻段×20%/15%回血（game.js getLeechSource）
+// 数据验证（docs/verify-output.txt · verify-output2.txt，全组合枚举×3图蒙特卡洛）：
+// - 战士半月/剑气爆必带：溅射打全场，第6槽带半月 > 第5单体（净金+20%）；
+//   基本剑术(0.05)不占槽，单体按加成降序填满
+// - 战士无吸血时护身气幕净金+5000~9000/分；吸血武器(嗜血战斧20%)成型后护身让位
+//   第4单体——全输出组合净金/经验双第一(50388/237825)，带护身净金-18%经验-26%
+// - 法师：魔法盾+分身70%减伤下零死亡净金第一；分身未出(41前)诱惑之光占槽
+//   （虚拟宝宝40%仇恨分流，Lv35净金-3.6万→+0.25万、死亡190→67/h）
+// - 道士：单体(灵魂火符/诅咒)优先于施毒术（Lv25/35净金TOP1一致），
+//   SC≥20宝宝够硬不带阴阳盾，50档3召唤+隐身+瘟疫+毒云双第一
+function recommendSkills(job, tierLv, slots, stats, leechRate) {
   const available = Object.entries(SKILLS).filter(([n, s]) => s.job === job && s.levelReq <= tierLv);
   // 分类并按 damageBonus 降序
   const aoeAttacks = available.filter(([n, s]) => s.type === "attack" && s.aoe).sort((a, b) => b[1].damageBonus - a[1].damageBonus);
@@ -2095,52 +2137,51 @@ function recommendSkills(job, tierLv, slots, stats) {
   const full = () => picked.length >= slots;
 
   if (job === "mage") {
-    // 法师脆皮(HP低)，减伤buff优先占槽：魔法盾0.30+分身术0.40叠加=70%减伤，几乎必带
-    // 先上所有可用 buff（最多2个），再用 AOE(0蓝耗打全场)填满，单体(耗蓝仅打主目标)最后
+    // 法师脆皮(HP低)：先上减伤buff（魔法盾0.30+分身0.40=70%），再用AOE(0蓝耗全额溅射)填满
+    // 分身未解锁(41前)减伤不足：诱惑之光优先占槽——魅惑怪变虚拟宝宝，40%仇恨分流+继承怪攻
     for (const e of buffs) { if (full()) break; push(e, "减伤" + Math.round(e[1].damageBonus * 100) + "%"); }
+    const hasClone = available.some(([n]) => n === "分身术");
+    if (!hasClone) {
+      const charm = available.find(([n]) => n === "诱惑之光");
+      if (charm && !full()) push(charm, "魅惑挡刀");
+    }
     for (const e of aoeAttacks) { if (full()) break; push(e, "AOE输出"); }
     for (const e of singleAttacks) { if (full()) break; push(e, "单体输出"); }
   } else if (job === "taoist") {
-    // 道士：召唤技能全带(每个1只宝宝,共存且全部群攻全场) → 隐身术(配合召唤近乎无敌)
-    // 阴阳盾阈值：SC≥20时宝宝总HP≥980,每回合净承伤~98,撑10+回合(清波仅2-4回合)
-    //   隐身100%覆盖→怪物全打宝宝→玩家不挨打→阴阳盾(玩家减伤)无用,省下槽位装输出
-    //   SC<20时宝宝脆易死→隐身漏→玩家挨打→需要阴阳盾保命
+    // 道士：召唤全带(每技能1只宝宝,群攻全场+挡刀) → 隐身(怪物强制打宝宝) →
+    // SC<20宝宝脆需减伤 → AOE毒 → 单体(灵魂火符/诅咒,优先于施毒) → 施毒 → 被动/治疗垫底
+    // 阴阳盾阈值：按召唤宝宝总HP=Σ(召唤加成)×SC×30 判定（≥980 撑10+回合，清波仅2-4回合）
+    // 50档三召唤(1.6×81×30=3888)免带省槽装输出；35档双召唤(0.9×27×30=729<980)宝宝脆需减伤
+    // （数据口径：Lv25/35净金TOP1均带减伤buff，Lv50 TOP1不带，见 docs/verify-output2.txt）
     const scVal = stats ? stats.maxSc : 0;
-    const petStrongEnough = scVal >= 20;
+    const petStrongEnough = summons.reduce((s, e) => s + e[1].damageBonus, 0) * scVal * 30 >= 980;
     for (const e of summons) { if (full()) break; push(e, "召唤群攻"); }
-    // 隐身术：delay=6触发6回合隐身=100%覆盖率，怪物强制打宝宝（需有召唤物），近乎无敌
     const stealth = available.find(e => e[0] === "隐身术" || e[0] === "集体隐身术");
     if (stealth && summons.length > 0 && !full()) push(stealth, "隐身无敌");
-    // 阴阳盾：仅在宝宝不够硬(SC<20)时带；SC≥20隐身全覆盖,省槽装输出
     if (!petStrongEnough) {
       const defBuff = buffs.find(e => e[1].damageBonus > 0);
       if (defBuff && !full()) push(defBuff, "减伤" + Math.round(defBuff[1].damageBonus * 100) + "%");
     }
-    // AOE DOT（瘟疫/毒云）：全场溅射+独立DOT通道，优先于施毒术
-    // （毒云 DOT 与施毒同公式且加成0.40>0.20、作用全场，解锁后施毒术让位）
     for (const e of aoeAttacks) { if (full()) break; push(e, "AOE输出"); }
-    // 施毒术（道士核心 DOT，独立通道）——AOE毒未解锁时的过渡输出
-    const poison = singleAttacks.find(e => e[0] === "施毒术");
-    if (poison && !full()) push(poison, "持续毒伤");
     if (singleAttacks.length > 0 && !full()) {
       const main = singleAttacks.find(e => e[0] !== "施毒术") || singleAttacks[0];
       push(main, "单体输出");
     }
+    const poison = singleAttacks.find(e => e[0] === "施毒术");
+    if (poison && !full()) push(poison, "持续毒伤");
     if (passives.length > 0 && !full()) push(passives[0], "被动加成");
     if (heals.length > 0 && !full()) push(heals[0], "回血");
   } else {
-    // 战士：无隐身无召唤，怪物直接打玩家 → 减伤buff(护身气幕)必带(直接省红药,净金+1084/分)
-    //   AOE优先(半月弯刀/剑气爆) → 护身气幕减伤 → 单体最多2个(MP少) → 被动
-    // 数据验证(Lv50石墓阵): 2AOE+3单体+护身气幕 净金7379 > 2AOE+4单体无减伤 净金6295
-    for (const e of aoeAttacks) { if (full()) break; push(e, "AOE输出"); }
-    // 护身气幕必带（Lv39+解锁；战士无隐身，减伤直接降低红药成本）
-    const defBuff = buffs.find(e => e[1].damageBonus > 0);
-    if (defBuff && !full()) push(defBuff, "减伤" + Math.round(defBuff[1].damageBonus * 100) + "%");
-    // 单体输出：战士 MP 少（Lv50 仅 243），最多带 2 个单体（4MP/回合，可撑 60 回合）
-    for (let i = 0; i < 2 && i < singleAttacks.length; i++) { if (full()) break; push(singleAttacks[i], "单体输出"); }
+    // 战士：AOE全带(半月26+/剑气爆44+，溅射=普攻总伤×Σ加成×0.5打全场10只) →
+    // 无吸血时护身气幕减伤40%(净金+5000~9000/分) → 单体按加成降序填满(不耗蓝) → 被动垫底
+    // 吸血成型(嗜血战斧20%):吸血随输出乘区放大、覆盖承伤，护身让位第4单体(净金+22%/经验+35%)
+    for (const e of aoeAttacks) { if (full()) break; push(e, "AOE溅射全场"); }
+    if (!(leechRate > 0)) {
+      const defBuff = buffs.find(e => e[1].damageBonus > 0);
+      if (defBuff && !full()) push(defBuff, "减伤省红药");
+    }
+    for (const e of singleAttacks) { if (full()) break; push(e, "单体输出"); }
     if (passives.length > 0 && !full()) push(passives[0], "被动加成");
-    // 剩余空槽补第3个单体或被动
-    for (const e of singleAttacks.slice(2)) { if (full()) break; push(e, "单体输出"); }
   }
 
   return picked.slice(0, slots);
@@ -2164,11 +2205,11 @@ function renderRecommend() {
   const mainStatName = { warrior: "物攻(DC)", mage: "魔法(MC)", taoist: "道术(SC)" }[job];
   let hintExtra = "";
   if (job === "taoist") {
-    hintExtra = " · 阴阳盾阈值：SC≥20时宝宝够硬(总HP≥980撑10+回合)，隐身100%覆盖怪物全打宝宝，不带阴阳盾省槽装输出；SC<20宝宝脆易死需阴阳盾保命";
+    hintExtra = " · 阴阳盾阈值：召唤宝宝总HP=Σ召唤加成×SC×30≥980时宝宝够硬撑10+回合，隐身100%覆盖怪物全打宝宝，不带减伤省槽装输出；宝宝总HP不足时脆易死需减伤保命 · 单体(灵魂火符/诅咒)优先于施毒术(净金TOP1口径)";
   } else if (job === "mage") {
-    hintExtra = " · 减伤buff优先(魔法盾+分身术叠加70%减伤) · AOE不耗蓝打全场，单体耗蓝只打主目标故不推荐";
+    hintExtra = " · 减伤buff优先(魔法盾+分身术叠加70%减伤，50档净金11.7万/分零死亡) · 分身术(41级)之前诱惑之光占槽(魅惑怪挡刀，Lv35死亡190→67/时) · AOE不耗蓝打全场，单体耗蓝只打主目标故不推荐";
   } else if (job === "warrior") {
-    hintExtra = " · 无隐身/召唤，怪物直接打玩家 → 护身气幕必带(40%减伤直接省红药，净金+1084/分) · 单体最多2个(MP少)";
+    hintExtra = " · 半月+剑气爆双AOE必带：溅射打全场10只，第6槽带半月优于第5单体(净金+20%) · 无吸血时护身气幕必带(40%减伤净金+5000~9000/分) · 52级嗜血战斧(吸血20%)成型后护身气幕让位第4单体(净金+22%/经验+35%)，全输出即可";
   }
   hint.textContent = `${JOB_NAMES_FULL[job]} 推荐配装 · 主属性：${mainStatName}` + hintExtra;
 
@@ -2181,7 +2222,9 @@ function renderRecommend() {
       if (picks[0]) equipObj[slot.type] = { name: picks[0].name };
     }
     const tierStats = getStats({ job, level: tier.lv, equipment: equipObj });
-    const skills = recommendSkills(job, tier.lv, tier.slots, tierStats);
+    // 推荐装备的吸血率（嗜血战斧20%/虹魔戒指15%）：决定战士是否还带护身气幕
+    const tierLeech = getLeechRate({ equipment: equipObj });
+    const skills = recommendSkills(job, tier.lv, tier.slots, tierStats, tierLeech);
 
     // 装备列表：推荐(高亮) + 备选(top5)
     const equipHtml = equips.map(({ slot, picks, alts }) => {
