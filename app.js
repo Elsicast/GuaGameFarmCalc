@@ -1927,6 +1927,10 @@ const RECOMMEND_TIERS = [
   { lv: 35, label: "Lv35 高级", slots: 5 },
   { lv: 50, label: "Lv50 毕业", slots: 6 },
   { lv: 52, label: "Lv52 吸血成型", slots: 6 },
+  // 54 档：藤域套(atk4-10/3-8/3-9，掉落黄泉教主等60级BOSS，一大陆低req图可越级磨)
+  { lv: 54, label: "Lv54 T4套", slots: 6 },
+  // 58 档：蝴蝶套(58级三职业套装)；60级武器(圣战屠龙等)在吸血优先规则下仍让位嗜血战斧
+  { lv: 58, label: "Lv58 蝴蝶套", slots: 6 },
 ];
 // 各职业主属性字段（战士堆物攻DC/法师堆魔法MC/道士堆道术SC）
 const JOB_MAIN_STAT = { warrior: "atk", mage: "mc", taoist: "sc" };
@@ -1954,7 +1958,13 @@ function setRecommendJob(job, btn) {
 }
 
 // 装备推荐：对每个槽位选出该职业该等级能穿、且能实际获取的主属性最高的装备
-// 可获取性：装备掉落怪的最低等级不超过 tierLv+ACQ_MARGIN（避免推荐打不了的装备）
+// 可获取性（2026-08-17 按掉落数据核查修订）：
+// 1. 无掉落数据的装备直接排除（喋血魔杖/命运之链/木域/神域套等服务端无投放来源，
+//    推测为商城/合成产物，挂机无法获取——旧逻辑"不拦"导致50档推荐了拿不到的装备）
+// 2. 专属掉落怪等级 ≤ tierLv+ACQ_MARGIN（lv60 BOSS(魔龙教主等)投放在低req一大陆图，
+//    成型角色可越级磨死，玩家实际认可该获取口径——50级穿青魔甲即打魔龙教主）
+// 3. 来源怪无等级数据（祭血心魔等世界BOSS/活动怪）不计入可获取来源
+// 4. 通用掉落按档位估算(low=1,mid=11,high=21)
 const ACQ_MARGIN = 10; // 允许稍微越级打怪获取
 function recommendEquip(job, tierLv) {
   const mainStat = JOB_MAIN_STAT[job];
@@ -1962,8 +1972,8 @@ function recommendEquip(job, tierLv) {
   // 力量戒指门槛：该等级基础物攻上限
   const baseAtkMax = baseStats.maxAtk;
   const idx = buildReverseIndex();
-  // 查装备的最低掉落怪等级：专属掉落取 monLevel；通用掉落按档位估算(low=1,mid=11,high=21)
-  // 返回 null 表示无掉落数据（商店/任务，不拦）
+  // 查装备的最低有效获取等级：专属掉落取 monLevel；通用掉落按档位估算
+  // 返回 null 表示无可用掉落来源（无掉落数据，或来源怪无等级数据——祭血心魔等世界BOSS）
   function minDropLv(name) {
     const sources = (idx.itemToSources && idx.itemToSources[name]) || [];
     const lvls = sources.map(s => {
@@ -1975,7 +1985,7 @@ function recommendEquip(job, tierLv) {
         if (s.tier.includes(">40")) return 21;
         return null;
       }
-      return s.monLevel;
+      return s.monLevel == null ? null : s.monLevel;
     }).filter(x => x != null);
     return lvls.length ? Math.min(...lvls) : null;
   }
@@ -1988,9 +1998,9 @@ function recommendEquip(job, tierLv) {
       if (it.level && it.level > tierLv) return false;
       if (it.needAtk && baseAtkMax < it.needAtk) return false;
       if (["skillbook", "potion", "material", "buff"].includes(it.type)) return false;
-      // 可获取性：掉落怪等级不超过 tierLv+ACQ_MARGIN（无掉落数据的不拦，可能是商店购买）
+      // 可获取性：必须有掉落来源，且最低掉落怪等级不超过 tierLv+ACQ_MARGIN
       const mdl = minDropLv(name);
-      if (mdl != null && mdl > tierLv + ACQ_MARGIN) return false;
+      if (mdl == null || mdl > tierLv + ACQ_MARGIN) return false;
       return true;
     });
     // 排序：输出类槽位(武器/戒指/项链)按主属性上限；防具类(衣服/头盔/手镯/鞋子/腰带/宝玉)按物防优先
@@ -2209,9 +2219,10 @@ function renderRecommend() {
   } else if (job === "mage") {
     hintExtra = " · 减伤buff优先(魔法盾+分身术叠加70%减伤，50档净金11.7万/分零死亡) · 分身术(41级)之前诱惑之光占槽(魅惑怪挡刀，Lv35死亡190→67/时) · AOE不耗蓝打全场，单体耗蓝只打主目标故不推荐";
   } else if (job === "warrior") {
-    hintExtra = " · 半月+剑气爆双AOE必带：溅射打全场10只，第6槽带半月优于第5单体(净金+20%) · 无吸血时护身气幕必带(40%减伤净金+5000~9000/分) · 52级嗜血战斧(吸血20%)成型后护身气幕让位第4单体(净金+22%/经验+35%)，全输出即可";
+    hintExtra = " · 半月+剑气爆双AOE必带：溅射打全场10只，第6槽带半月优于第5单体(净金+20%) · 无吸血时护身气幕必带(40%减伤净金+5000~9000/分) · 52级嗜血战斧(吸血20%)成型后护身气幕让位第4单体(净金+22%/经验+35%)，60级仍优(净金-0.96万vs-3.0万/分且零死亡) · 防具纯堆物防：req≤52全图魔法伤害占比仅1.5%(物理13.2万vs魔法0.2万)";
   }
-  hint.textContent = `${JOB_NAMES_FULL[job]} 推荐配装 · 主属性：${mainStatName}` + hintExtra;
+  hint.textContent = `${JOB_NAMES_FULL[job]} 推荐配装 · 主属性：${mainStatName}` + hintExtra
+    + " · 已过滤无掉落来源的装备(喋血系武器/木域神域套等推测为商城产物) · 40级起可从桃源之门进二大陆刷遮天系掉落";
 
   const body = document.getElementById("recommend-body");
   body.innerHTML = RECOMMEND_TIERS.map(tier => {
