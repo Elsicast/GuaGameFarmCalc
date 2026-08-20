@@ -16,7 +16,7 @@
 
 - **数据获取方式**：从 guagame.com 的游戏源码中提取（站点已迁移目录：引擎 JS 在 `/js/`，数据在 `/data/`，入口 `/index.html`）
 - **数据时效**：以抓取时服务端版本为准，若服务端更新需重新核对
-- **最近核查**：2026-08-17 重新抓取全量比对，服务端数值与本地完全一致（零差异）；原版参考源码见 `docs/reference/`（origin-game.js / origin-ui.js / origin-api.js）
+- **最近核查**：2026-08-20 重新抓取全量比对（game.js/ui.js/api.js + 全部数据文件），与本地零差异，客户端版本号仍为 2026-08-07-2；原版参考源码见 `docs/reference/`（origin-game.js / origin-ui.js / origin-api.js）
 - **数据文件**（位于项目根目录）：
 
 | 文件 | 内容 | 数据量 |
